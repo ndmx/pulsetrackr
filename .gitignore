@@ -1,0 +1,6 @@
+.DS_Store
+.mapbox
+Config/Local.xcconfig
+DerivedData/
+build/
+xcuserdata/

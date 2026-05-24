@@ -9,6 +9,10 @@ import SwiftUI
 
 @main
 struct pulsetrackrApp: App {
+    init() {
+        FirebaseBootstrap.configureIfAvailable()
+    }
+
     var body: some Scene {
         WindowGroup {
             ContentView()

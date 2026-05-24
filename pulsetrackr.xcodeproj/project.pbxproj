@@ -6,6 +6,14 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		7738F9B22FA9154F004E75B1 /* MapboxMaps in Frameworks */ = {isa = PBXBuildFile; productRef = 7738F9B12FA9154F004E75B1 /* MapboxMaps */; };
+		8F1A0B812F0A111100ABCDEF /* FirebaseAuth in Frameworks */ = {isa = PBXBuildFile; productRef = 8F1A0B7E2F0A111100ABCDEF /* FirebaseAuth */; };
+		8F1A0B832F0A111100ABCDEF /* FirebaseCore in Frameworks */ = {isa = PBXBuildFile; productRef = 8F1A0B7F2F0A111100ABCDEF /* FirebaseCore */; };
+		8F1A0B842F0A111100ABCDEF /* FirebaseFirestore in Frameworks */ = {isa = PBXBuildFile; productRef = 8F1A0B802F0A111100ABCDEF /* FirebaseFirestore */; };
+		8F1A0B852F0A111100ABCDEF /* FirebaseFunctions in Frameworks */ = {isa = PBXBuildFile; productRef = 8F1A0B822F0A111100ABCDEF /* FirebaseFunctions */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		772675FF2E4EC6A900FEFAD5 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -30,9 +38,9 @@
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
-		772675F32E4EC6A700FEFAD5 /* pulsetrackr */ = {
+		772675F32E4EC6A700FEFAD5 /* app */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			path = pulsetrackr;
+			path = app;
 			sourceTree = "<group>";
 		};
 		772676012E4EC6A900FEFAD5 /* pulsetrackrTests */ = {
@@ -52,6 +60,11 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				7738F9B22FA9154F004E75B1 /* MapboxMaps in Frameworks */,
+				8F1A0B812F0A111100ABCDEF /* FirebaseAuth in Frameworks */,
+				8F1A0B832F0A111100ABCDEF /* FirebaseCore in Frameworks */,
+				8F1A0B842F0A111100ABCDEF /* FirebaseFirestore in Frameworks */,
+				8F1A0B852F0A111100ABCDEF /* FirebaseFunctions in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -75,7 +88,7 @@
 		772675E82E4EC6A700FEFAD5 = {
 			isa = PBXGroup;
 			children = (
-				772675F32E4EC6A700FEFAD5 /* pulsetrackr */,
+				772675F32E4EC6A700FEFAD5 /* app */,
 				772676012E4EC6A900FEFAD5 /* pulsetrackrTests */,
 				7726760B2E4EC6A900FEFAD5 /* pulsetrackrUITests */,
 				772675F22E4EC6A700FEFAD5 /* Products */,
@@ -102,16 +115,22 @@
 				772675ED2E4EC6A700FEFAD5 /* Sources */,
 				772675EE2E4EC6A700FEFAD5 /* Frameworks */,
 				772675EF2E4EC6A700FEFAD5 /* Resources */,
+				8F1A0B772F097A5100ABCDEF /* Inject Mapbox Token */,
 			);
 			buildRules = (
 			);
 			dependencies = (
 			);
 			fileSystemSynchronizedGroups = (
-				772675F32E4EC6A700FEFAD5 /* pulsetrackr */,
+				772675F32E4EC6A700FEFAD5 /* app */,
 			);
 			name = pulsetrackr;
 			packageProductDependencies = (
+				7738F9B12FA9154F004E75B1 /* MapboxMaps */,
+				8F1A0B7E2F0A111100ABCDEF /* FirebaseAuth */,
+				8F1A0B7F2F0A111100ABCDEF /* FirebaseCore */,
+				8F1A0B802F0A111100ABCDEF /* FirebaseFirestore */,
+				8F1A0B822F0A111100ABCDEF /* FirebaseFunctions */,
 			);
 			productName = pulsetrackr;
 			productReference = 772675F12E4EC6A700FEFAD5 /* pulsetrackr.app */;
@@ -195,6 +214,10 @@
 			);
 			mainGroup = 772675E82E4EC6A700FEFAD5;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				7738F9B02FA9154F004E75B1 /* XCRemoteSwiftPackageReference "mapbox-maps-ios" */,
+				8F1A0B7D2F0A111100ABCDEF /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 772675F22E4EC6A700FEFAD5 /* Products */;
 			projectDirPath = "";
@@ -230,6 +253,29 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		8F1A0B772F097A5100ABCDEF /* Inject Mapbox Token */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(HOME)/.mapbox",
+			);
+			name = "Inject Mapbox Token";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -e\nTOKEN_FILE=\"$HOME/.mapbox\"\nINFO_PLIST=\"$TARGET_BUILD_DIR/$INFOPLIST_PATH\"\n\nif [ ! -f \"$TOKEN_FILE\" ]; then\n  echo \"warning: Mapbox runtime token not found at ~/.mapbox. Add your public token there before running the Mapbox map.\"\n  exit 0\nfi\n\ntoken=\"$(tr -d '\\n\\r ' < \"$TOKEN_FILE\")\"\n\nif [ -z \"$token\" ]; then\n  echo \"warning: ~/.mapbox exists but is empty. Add your public Mapbox token before running the Mapbox map.\"\n  exit 0\nfi\n\n/usr/libexec/PlistBuddy -c \"Set :MBXAccessToken $token\" \"$INFO_PLIST\" 2>/dev/null || \\\n/usr/libexec/PlistBuddy -c \"Add :MBXAccessToken string $token\" \"$INFO_PLIST\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		772675ED2E4EC6A700FEFAD5 /* Sources */ = {
@@ -400,6 +446,7 @@
 				DEVELOPMENT_TEAM = 4ZSXLWH9W2;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "PulseTrackr uses your approximate location to show nearby reports on the live map.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -428,6 +475,7 @@
 				DEVELOPMENT_TEAM = 4ZSXLWH9W2;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "PulseTrackr uses your approximate location to show nearby reports on the live map.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -558,6 +606,53 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		7738F9B02FA9154F004E75B1 /* XCRemoteSwiftPackageReference "mapbox-maps-ios" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/mapbox/mapbox-maps-ios.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 11.0.0;
+			};
+		};
+		8F1A0B7D2F0A111100ABCDEF /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/firebase/firebase-ios-sdk.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 11.0.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		7738F9B12FA9154F004E75B1 /* MapboxMaps */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 7738F9B02FA9154F004E75B1 /* XCRemoteSwiftPackageReference "mapbox-maps-ios" */;
+			productName = MapboxMaps;
+		};
+		8F1A0B7E2F0A111100ABCDEF /* FirebaseAuth */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 8F1A0B7D2F0A111100ABCDEF /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseAuth;
+		};
+		8F1A0B7F2F0A111100ABCDEF /* FirebaseCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 8F1A0B7D2F0A111100ABCDEF /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseCore;
+		};
+		8F1A0B802F0A111100ABCDEF /* FirebaseFirestore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 8F1A0B7D2F0A111100ABCDEF /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseFirestore;
+		};
+		8F1A0B822F0A111100ABCDEF /* FirebaseFunctions */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 8F1A0B7D2F0A111100ABCDEF /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseFunctions;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 772675E92E4EC6A700FEFAD5 /* Project object */;
 }
