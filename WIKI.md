@@ -122,6 +122,16 @@ graph LR
     RIV -->|submit| IS[IncidentStore.addIncident]
 ```
 
+`IncidentClassifier` is an **ordered, first-match-wins** rule chain (the order
+encodes curated priority, e.g. `flooded road` → traffic *before* weather; `bad road`
+→ before crash). Matching uses **left word-boundary prefix** matching (`\bterm`), so
+inflections still match (`kidnap` → `kidnapping`) while embedded words do not
+(`fire` inside `ceasefire`). Phrase lists include Nigerian/Pidgin variants
+(`dey burn`, `fire outbreak`, `don collapse`, `go slow`, `PHCN`, `gbomo gbomo`, …);
+malls/plazas/complexes are checked before markets so a "shopping complex fire" maps
+to Building fire, not Market fire. No new subtypes were added. Covered by
+`ClassifierNigerianTests.swift` plus the existing regression/validation suites.
+
 ---
 
 ## 3. File Reference
@@ -138,8 +148,8 @@ graph LR
 | `FeedView.swift` | Feed tab + sheet | `FeedView` + 9 private views | `IncidentStore`, `LocationManager`, `@AppStorage watchRadius/urgentAlerts/communityAlerts` | — |
 | `FeedMapboxLayer.swift` | Mapbox layer for Feed | `FeedMapboxLayer`, `FeedMapboxPin` | `[Incident]` passed in | — |
 | `IncidentDetailView.swift` | Incident detail | `IncidentDetailView` + `detailPanel()` modifier | `IncidentStore.incident(withID:)` | `IncidentStore.record(_:for:)` |
-| `ReportIncidentView.swift` | Report new incident | `ReportIncidentView` + 9 private views | `LocationManager`, `IncidentClassifier`, `@AppStorage useApproximateLocation` | `IncidentStore.addIncident(...)` |
-| `SettingsView.swift` | Settings | `SettingsView` + 4 private views | `@AppStorage` (4 keys) | `@AppStorage` (4 keys) |
+| `ReportIncidentView.swift` | Report new incident — **single unified form** (text + optional photo + optional voice + ongoing/past toggle, all submitted together) | `ReportIncidentView` + private views (`ReportComposer`, `StatusPill`, `SuggestionPanel`, …) | `LocationManager`, `IncidentClassifier`, `@AppStorage useApproximateLocation` | `IncidentStore.addIncident(...)` |
+| `SettingsView.swift` | Settings | `SettingsView` + private views incl. `PrecisionLocationRow` | `@AppStorage` (4 keys), `LocationManager` (auth + accuracy), `SOSStore` | `@AppStorage` (4 keys) |
 | `Incident.swift` | Domain model | `Incident`, `IncidentCategory`, `IncidentSubtype`, `IncidentSeverity`, `IncidentStatus`, `IncidentConfidence`, `CommunitySignal`, `IncidentUpdate` + `CLLocationCoordinate2D` extensions (`pulseDefaultCenter`, `isValid`, locale-aware distance) | — | — (value types) |
 | `IncidentStore.swift` | State manager + geo-region subscription | `IncidentStore`; `Incident.seedIncidents` is **`#if DEBUG` only** (previews) | `SafetyIncidentRemoteStore` (optional) | self: in-place O(1) mutation via `lookup[UUID:Int]`; `@Published lastSyncError` |
 | `SafetyIncidentRemoteStore.swift` | Firebase integration; geohash-bounded feed | `SafetyIncidentRemoteStore`, `SafetyIncidentRemoteStoreError` | Firestore `safety_incidents_public` via per-prefix `geohash` range listeners | Firestore via `submit_incident` Function; Storage evidence |
@@ -160,7 +170,7 @@ graph LR
 | `functions/src/sosShared.js` | SOS backend validation helpers | payload sanitizers, idempotency helpers | callable payloads | pure values |
 | `functions/src/notificationProviders.js` | SOS notification adapters | Twilio SMS/voice, SendGrid email | provider secrets | provider delivery APIs |
 | `IncidentClassifier.swift` | Text classification | `IncidentClassifier`, `IncidentClassification` | title + summary strings | — (pure function) |
-| `LocationManager.swift` | Location wrapper | `LocationManager` | `CLLocationManager` | publishes `currentCoordinate`, `authorizationStatus`; persists last-known coord to `UserDefaults` |
+| `LocationManager.swift` | Location wrapper | `LocationManager` | `CLLocationManager` | publishes `currentCoordinate`, `authorizationStatus`, `accuracyAuthorization` (full vs reduced); persists last-known coord to `UserDefaults` |
 
 ---
 
@@ -221,6 +231,12 @@ community  → missingPerson, localWarning, safeRoute, communityWatch,
 
 ### Reporting an Incident
 
+One form collects everything at once — title/description, an optional photo, an
+optional voice note, and an "Is this still happening?" choice (Happening now →
+`status .active`; Already happened → `.watching`). The classifier suggestion panel
+sits beneath and can be accepted or overridden. All filled inputs are merged into a
+single `addIncident` call.
+
 ```
 User types title/summary
   → IncidentClassifier.classify(title:summary:)        [pure, keyword match]
@@ -276,6 +292,8 @@ IncidentDetailView → user taps signal button
 (incidents already proximity-bounded server-side to the watch radius — see §9)
 IncidentStore.activeIncidents          [status != resolved, sorted by date]
   → IncidentStore.nearbyIncidents(urgentAlerts:communityAlerts:watchRadius:near:)
+       ├── classify: urgent = category ∈ urgentTypes OR incident.isHighRisk;
+       │            community notice = (not urgent) AND category ∈ communityTypes
        ├── filter by urgentAlerts / communityAlerts (@AppStorage)
        └── filter by watchRadius * 1000m from locationManager.currentCoordinate
            (locationless incidents are excluded from the radius filter)
@@ -485,6 +503,16 @@ standard geohash, and the client queries only the cells around the user.
 - **Backfill** — docs written before this change lack `geohash` and are skipped by
   geo-queries; backfill with `encodeGeohash(lat, lng)` if pre-existing public data.
 
+> **⚠️ Deploy gotcha (client/backend version skew).** The client query is
+> `order(by: "geohash")`, which Firestore **excludes any document missing that
+> field** from. So the geo-feed only works once `submit_incident` is **deployed**
+> (`firebase deploy --only functions:pulsetrackr-sos:submit_incident`) — shipping
+> the app to TestFlight does *not* deploy the backend. Symptom of the skew: a
+> reported incident never appears in the reporter's own feed/map because its doc has
+> no `geohash`. Confirm by checking a doc in `safety_incidents_public` for a
+> `geohash` field. `sanitizeIncidentPayload` now rejects missing, partial, or
+> invalid coordinates rather than inventing a fallback pin.
+
 **Data-visibility consequence:** users only see incidents within their watch radius
 (default 3 km, max 15 km) of their *own* location. No cross-country data; users in
 different cities see different alerts; two users share an alert only where their
@@ -505,6 +533,17 @@ the development language; `es` is wired end-to-end as a worked example (a build
 emits `es.lproj/Localizable.strings`). String *variables* must be typed
 `LocalizedStringKey` to localize (see `LocationPromptCard`). Full migration is
 incremental — see `LOCALIZATION.md`.
+
+### Location permission & accuracy
+
+`LocationManager` publishes `authorizationStatus` and `accuracyAuthorization`
+(`.fullAccuracy` vs `.reducedAccuracy`). Settings → Privacy shows a
+`PrecisionLocationRow` reflecting this (green when full accuracy, orange + a
+Settings shortcut when reduced or unauthorized). Reduced accuracy still yields a
+coarse coordinate (so the geo-feed works, just less precisely); only a *missing*
+fix at report time (or denial) prevents reporting. The app disables report submit
+until it has a current or last-known coordinate, and the backend rejects any report
+without a valid lat/long pair.
 
 ### Initial map camera
 

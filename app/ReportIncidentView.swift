@@ -4,56 +4,10 @@ import PhotosUI
 import SwiftUI
 import UIKit
 
-enum ReportInputMode: String, CaseIterable, Identifiable {
-    case media
-    case live
-    case voice
-    case text
-
-    var id: String { rawValue }
-
-    var label: String {
-        switch self {
-        case .media: "Photo"
-        case .live: "Live"
-        case .voice: "Voice"
-        case .text: "Text"
-        }
-    }
-
-    var icon: String {
-        switch self {
-        case .media: "camera.fill"
-        case .live: "dot.radiowaves.left.and.right"
-        case .voice: "mic.fill"
-        case .text: "text.bubble.fill"
-        }
-    }
-
-    var color: Color {
-        switch self {
-        case .media: .purple
-        case .live: .red
-        case .voice: .blue
-        case .text: .green
-        }
-    }
-
-    var actionTitle: String {
-        switch self {
-        case .media: "Attach a photo"
-        case .live: "Mark as ongoing"
-        case .voice: "Record a voice note"
-        case .text: "Describe what you see"
-        }
-    }
-}
-
 struct ReportIncidentView: View {
     @EnvironmentObject private var incidentStore: IncidentStore
     @EnvironmentObject private var locationManager: LocationManager
     @FocusState private var focusedField: ReportField?
-    @State private var inputMode: ReportInputMode = .text
     @State private var title = ""
     @State private var summary = ""
     @State private var neighborhood = ""
@@ -63,7 +17,8 @@ struct ReportIncidentView: View {
     @AppStorage(AppStorageKey.useApproximateLocation) private var useApproximateLocation = true
     @State private var hasVoiceNote = false
     @State private var hasMediaEvidence = false
-    @State private var hasLiveSignal = false
+    // Ongoing → Active (top priority); already-happened → Watching.
+    @State private var isOngoing = true
     @State private var selectedPhotoItem: PhotosPickerItem?
     @State private var selectedPhotoData: Data?
     @State private var isLoadingPhoto = false
@@ -82,7 +37,15 @@ struct ReportIncidentView: View {
     private var canSubmit: Bool {
         let hasDescription = title.trimmingCharacters(in: .whitespacesAndNewlines).count >= 4 &&
             summary.trimmingCharacters(in: .whitespacesAndNewlines).count >= 10
-        return hasDescription || hasVoiceNote || hasMediaEvidence || hasLiveSignal
+        return hasReportLocation && (hasDescription || hasVoiceNote || hasMediaEvidence)
+    }
+
+    private var reportCoordinate: CLLocationCoordinate2D? {
+        locationManager.currentCoordinate ?? LocationManager.lastKnownCoordinate
+    }
+
+    private var hasReportLocation: Bool {
+        reportCoordinate != nil
     }
 
     var body: some View {
@@ -90,19 +53,16 @@ struct ReportIncidentView: View {
             VStack(alignment: .leading, spacing: 16) {
                 ReportHero(
                     locationStatus: locationStatus,
-                    hasPrivateCoordinate: locationManager.currentCoordinate != nil
+                    hasPrivateCoordinate: hasReportLocation
                 )
 
-                LauncherGrid(selectedMode: $inputMode)
-
                 ReportComposer(
-                    mode: inputMode,
                     title: $title,
                     summary: $summary,
                     neighborhood: $neighborhood,
                     hasVoiceNote: $hasVoiceNote,
                     hasMediaEvidence: $hasMediaEvidence,
-                    hasLiveSignal: $hasLiveSignal,
+                    isOngoing: $isOngoing,
                     selectedPhotoItem: $selectedPhotoItem,
                     selectedPhotoData: $selectedPhotoData,
                     isLoadingPhoto: isLoadingPhoto,
@@ -148,9 +108,6 @@ struct ReportIncidentView: View {
         }
         .onChange(of: category) { _, newCategory in
             subtype = IncidentSubtype.defaultSubtype(for: newCategory)
-        }
-        .onChange(of: inputMode) { _, _ in
-            dismissKeyboard()
         }
         .onChange(of: selectedPhotoItem) { _, newItem in
             loadPhoto(from: newItem)
@@ -220,7 +177,15 @@ struct ReportIncidentView: View {
     private var locationStatus: String {
         switch locationManager.authorizationStatus {
         case .authorizedAlways, .authorizedWhenInUse:
-            locationManager.currentCoordinate == nil ? "Finding private location" : "Private location captured"
+            if locationManager.currentCoordinate != nil {
+                locationManager.accuracyAuthorization == .reducedAccuracy
+                    ? "Approximate location captured"
+                    : "Private location captured"
+            } else if LocationManager.lastKnownCoordinate != nil {
+                "Using last known location"
+            } else {
+                "Finding private location"
+            }
         case .notDetermined:
             "Location permission needed"
         case .denied, .restricted:
@@ -262,9 +227,9 @@ struct ReportIncidentView: View {
             subtype: finalSubtype,
             severity: finalSeverity,
             neighborhood: neighborhood.trimmingCharacters(in: .whitespacesAndNewlines),
-            reporterCoordinate: locationManager.currentCoordinate,
+            reporterCoordinate: reportCoordinate,
             useApproximateLocation: useApproximateLocation,
-            status: hasLiveSignal ? .watching : .active,
+            status: isOngoing ? .active : .watching,
             evidenceUpdates: evidenceNotes,
             evidenceAttachments: evidenceAttachments
         )
@@ -277,11 +242,10 @@ struct ReportIncidentView: View {
         severity = .medium
         hasVoiceNote = false
         hasMediaEvidence = false
-        hasLiveSignal = false
+        isOngoing = true
         selectedPhotoItem = nil
         selectedPhotoData = nil
         voiceRecorder.reset()
-        inputMode = .text
         showManualOptions = false
         showSubmitted = true
     }
@@ -305,8 +269,10 @@ struct ReportIncidentView: View {
         if voiceRecorder.recordingURL != nil {
             notes.append("Voice note was recorded by the reporter (\(voiceRecorder.formattedRecordedDuration)).")
         }
-        if hasLiveSignal {
+        if isOngoing {
             notes.append("Reporter marked this as a live/ongoing incident and may add updates as the situation changes.")
+        } else {
+            notes.append("Reporter marked this as an incident that already happened (not ongoing).")
         }
         return notes
     }
@@ -407,81 +373,73 @@ private struct ReportHero: View {
     }
 }
 
-private struct LauncherGrid: View {
-    @Binding var selectedMode: ReportInputMode
-
-    private let columns = [
-        GridItem(.flexible(), spacing: 10),
-        GridItem(.flexible(), spacing: 10)
-    ]
-
-    var body: some View {
-        LazyVGrid(columns: columns, spacing: 10) {
-            ForEach(ReportInputMode.allCases) { mode in
-                Button {
-                    selectedMode = mode
-                } label: {
-                    HStack(spacing: 12) {
-                        Image(systemName: mode.icon)
-                            .font(.title2)
-                            .frame(width: 34)
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text(mode.label)
-                                .font(.headline)
-                            Text(mode.actionTitle)
-                                .font(.caption2)
-                                .lineLimit(1)
-                                .foregroundStyle(.white.opacity(0.58))
-                        }
-                        Spacer(minLength: 0)
-                    }
-                    .padding(13)
-                    .frame(minHeight: 74)
-                    .background(selectedMode == mode ? mode.color.opacity(0.24) : .white.opacity(0.08), in: RoundedRectangle(cornerRadius: 16))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 16)
-                            .stroke(selectedMode == mode ? mode.color.opacity(0.78) : .white.opacity(0.06), lineWidth: 1)
-                    )
-                    .foregroundStyle(selectedMode == mode ? mode.color : .white)
-                }
-                .buttonStyle(.plain)
-            }
-        }
-    }
-}
-
 private struct ReportComposer: View {
-    var mode: ReportInputMode
     @Binding var title: String
     @Binding var summary: String
     @Binding var neighborhood: String
     @Binding var hasVoiceNote: Bool
     @Binding var hasMediaEvidence: Bool
-    @Binding var hasLiveSignal: Bool
+    @Binding var isOngoing: Bool
     @Binding var selectedPhotoItem: PhotosPickerItem?
     @Binding var selectedPhotoData: Data?
     var isLoadingPhoto: Bool
     @ObservedObject var voiceRecorder: VoiceNoteRecorder
     var focusedField: FocusState<ReportField?>.Binding
 
+    // One form: describe it, say whether it's ongoing, and optionally add a photo
+    // and/or a voice note — all submitted together.
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Label(mode.actionTitle, systemImage: mode.icon)
-                .font(.headline)
-                .foregroundStyle(mode.color)
-
-            switch mode {
-            case .text:
+        VStack(alignment: .leading, spacing: 18) {
+            section(title: "Describe what you see", icon: "text.bubble.fill", color: .green) {
                 textFields
-            case .voice:
-                voiceControls
-            case .media:
+            }
+
+            Divider().background(.white.opacity(0.07))
+
+            section(title: "Is this still happening?", icon: "dot.radiowaves.left.and.right", color: .red) {
+                statusControls
+            }
+
+            Divider().background(.white.opacity(0.07))
+
+            section(title: "Add a photo (optional)", icon: "camera.fill", color: .purple) {
                 photoControls
-            case .live:
-                liveControls
+            }
+
+            Divider().background(.white.opacity(0.07))
+
+            section(title: "Add a voice note (optional)", icon: "mic.fill", color: .blue) {
+                voiceControls
             }
         }
         .cardPanel(backgroundOpacity: 0.09)
+    }
+
+    @ViewBuilder
+    private func section<Content: View>(
+        title: String,
+        icon: String,
+        color: Color,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label(title, systemImage: icon)
+                .font(.subheadline)
+                .fontWeight(.bold)
+                .foregroundStyle(color)
+            content()
+        }
+    }
+
+    private var statusControls: some View {
+        HStack(spacing: 10) {
+            StatusPill(title: "Happening now", icon: "dot.radiowaves.left.and.right", color: .red, isSelected: isOngoing) {
+                isOngoing = true
+            }
+            StatusPill(title: "Already happened", icon: "clock.arrow.circlepath", color: .orange, isSelected: !isOngoing) {
+                isOngoing = false
+            }
+        }
     }
 
     private var textFields: some View {
@@ -555,7 +513,7 @@ private struct ReportComposer: View {
                     title: selectedPhotoData == nil ? "Choose photo" : "Change photo",
                     subtitle: isLoadingPhoto ? "Loading selected image..." : "Adds a photo evidence note to this report",
                     icon: selectedPhotoData == nil ? "photo.badge.plus" : "checkmark.circle.fill",
-                    color: mode.color
+                    color: .purple
                 )
             }
             .buttonStyle(.plain)
@@ -568,7 +526,7 @@ private struct ReportComposer: View {
                 title: voiceRecorder.isRecording ? "Stop recording" : (voiceRecorder.recordingURL == nil ? "Record voice note" : "Record again"),
                 subtitle: voiceRecorder.statusText,
                 icon: voiceRecorder.isRecording ? "stop.circle.fill" : "mic.circle.fill",
-                color: mode.color
+                color: .blue
             ) {
                 if voiceRecorder.isRecording {
                     voiceRecorder.stop()
@@ -600,20 +558,33 @@ private struct ReportComposer: View {
         }
     }
 
-    private var liveControls: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            EvidenceAttachButton(
-                title: hasLiveSignal ? "Live updates on" : "Mark as live / ongoing",
-                subtitle: "This is not video. It marks the report as ongoing so nearby people know conditions may change.",
-                icon: hasLiveSignal ? "checkmark.circle.fill" : "dot.radiowaves.left.and.right",
-                color: mode.color
-            ) {
-                hasLiveSignal.toggle()
-                if hasLiveSignal {
-                    fillIfNeeded(title: "Live report", summary: "Reporter is sharing an ongoing incident and may add updates as it changes.")
-                }
+}
+
+private struct StatusPill: View {
+    var title: String
+    var icon: String
+    var color: Color
+    var isSelected: Bool
+    var action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Image(systemName: icon)
+                    .font(.subheadline)
+                Text(title)
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
             }
+            .frame(maxWidth: .infinity, minHeight: 46)
+            .background(isSelected ? color.opacity(0.22) : .white.opacity(0.07), in: RoundedRectangle(cornerRadius: 13))
+            .overlay(
+                RoundedRectangle(cornerRadius: 13)
+                    .stroke(isSelected ? color.opacity(0.7) : .white.opacity(0.10), lineWidth: 1)
+            )
+            .foregroundStyle(isSelected ? color : .white.opacity(0.7))
         }
+        .buttonStyle(.plain)
     }
 }
 

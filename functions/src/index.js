@@ -50,9 +50,7 @@ exports.submit_incident = onCall(callableOptions, async (request) => {
   const payload = sanitizeIncidentPayload(request.data || {}, uid);
   const privateRef = db.collection('safety_reports_private').doc();
   const publicRef = db.collection('safety_incidents_public').doc(privateRef.id);
-  const publicCoordinate = payload.useApproximateLocation
-    ? approximateCoordinate(payload.latitude, payload.longitude)
-    : { latitude: payload.latitude, longitude: payload.longitude };
+  const publicCoordinate = publicIncidentCoordinate(payload);
 
   await db.runTransaction(async (transaction) => {
     transaction.set(privateRef, withoutUndefined({
@@ -82,9 +80,11 @@ exports.submit_incident = onCall(callableOptions, async (request) => {
       severity: payload.severity,
       status: payload.status,
       neighborhood: payload.neighborhood || 'Nearby area',
-      latitude: publicCoordinate.latitude,
-      longitude: publicCoordinate.longitude,
-      geohash: encodeGeohash(publicCoordinate.latitude, publicCoordinate.longitude),
+      latitude: publicCoordinate?.latitude,
+      longitude: publicCoordinate?.longitude,
+      geohash: publicCoordinate
+        ? encodeGeohash(publicCoordinate.latitude, publicCoordinate.longitude)
+        : undefined,
       confirmations: 1,
       disputes: 0,
       unsafe_reports: 0,
@@ -634,12 +634,7 @@ function sanitizeIncidentPayload(data, uid) {
     throw new HttpsError('invalid-argument', 'title and summary are required');
   }
 
-  const latitude = data.latitude === undefined ? 6.5244 : Number(data.latitude);
-  const longitude = data.longitude === undefined ? 3.3792 : Number(data.longitude);
-  if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90
-    || !Number.isFinite(longitude) || longitude < -180 || longitude > 180) {
-    throw new HttpsError('invalid-argument', 'A valid latitude and longitude are required');
-  }
+  const coordinate = sanitizeIncidentCoordinate(data);
 
   const evidence = Array.isArray(data.evidence)
     ? data.evidence.slice(0, 4).map((item) => sanitizeIncidentEvidence(item, uid, clientRef))
@@ -654,12 +649,48 @@ function sanitizeIncidentPayload(data, uid) {
     severity: cleanString(data.severity, 40) || 'Medium',
     status: cleanString(data.status, 40) || 'Active',
     neighborhood: cleanString(data.neighborhood, 120) || 'Nearby area',
-    latitude,
-    longitude,
+    latitude: coordinate.latitude,
+    longitude: coordinate.longitude,
     useApproximateLocation: data.use_approximate_location !== false,
     source: cleanString(data.source, 40) || 'ios',
     evidence,
   };
+}
+
+function sanitizeIncidentCoordinate(data) {
+  const hasLatitude = hasCoordinateValue(data.latitude);
+  const hasLongitude = hasCoordinateValue(data.longitude);
+  if (hasLatitude !== hasLongitude) {
+    throw new HttpsError('invalid-argument', 'latitude and longitude must be provided together');
+  }
+  if (!hasLatitude) {
+    throw new HttpsError('invalid-argument', 'A valid latitude and longitude are required');
+  }
+
+  const latitude = Number(data.latitude);
+  const longitude = Number(data.longitude);
+  if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90
+    || !Number.isFinite(longitude) || longitude < -180 || longitude > 180) {
+    throw new HttpsError('invalid-argument', 'A valid latitude and longitude are required');
+  }
+
+  return { latitude, longitude };
+}
+
+function hasCoordinateValue(value) {
+  return value !== undefined
+    && value !== null
+    && !(typeof value === 'string' && value.trim() === '');
+}
+
+function publicIncidentCoordinate(payload) {
+  if (payload.latitude === undefined || payload.longitude === undefined) {
+    return undefined;
+  }
+
+  return payload.useApproximateLocation
+    ? approximateCoordinate(payload.latitude, payload.longitude)
+    : { latitude: payload.latitude, longitude: payload.longitude };
 }
 
 function sanitizeIncidentEvidence(item, uid, clientRef) {
@@ -734,4 +765,11 @@ function timestampToIso(value) {
 
 function withoutUndefined(object) {
   return Object.fromEntries(Object.entries(object).filter(([, value]) => value !== undefined));
+}
+
+if (process.env.NODE_ENV === 'test') {
+  exports.__test = {
+    publicIncidentCoordinate,
+    sanitizeIncidentPayload,
+  };
 }
