@@ -13,66 +13,101 @@ struct MapboxIncidentMapView: View {
     @State private var selectedIncident: Incident?
     @State private var selectedCategory: IncidentCategory?
     @State private var isShowingCategoryFilters = false
-    @State private var viewport: Viewport = .camera(
-        center: CLLocationCoordinate2D(latitude: 6.5244, longitude: 3.3792),
-        zoom: 15.1,
-        bearing: -18,
-        pitch: 44
-    )
+    @State private var hasCenteredOnUser = false
+    @State private var viewport: Viewport = {
+        if let last = LocationManager.lastKnownCoordinate {
+            return .camera(center: last, zoom: 15.1, bearing: -18, pitch: 44)
+        }
+        // Brand-new user: open on a flat world view, not an arbitrary city.
+        return .camera(center: MapDefaults.worldCenter, zoom: MapDefaults.worldMapboxZoom, bearing: 0, pitch: 0)
+    }()
 
     var body: some View {
-        ZStack(alignment: .bottom) {
-            Map(viewport: $viewport) {
-                Puck2D(bearing: .heading)
-                    .showsAccuracyRing(true)
+        GeometryReader { proxy in
+            if proxy.size.width > 1, proxy.size.height > 1 {
+                ZStack(alignment: .bottom) {
+                    Map(viewport: $viewport) {
+                        Puck2D(bearing: .heading)
+                            .showsAccuracyRing(true)
 
-                ForEvery(sosStore.trailArtifacts) { artifact in
-                    MapViewAnnotation(coordinate: artifact.coordinate) {
-                        SOSTrailBreadcrumb(artifact: artifact)
-                    }
-                    .allowOverlap(true)
-                    .allowZElevate(true)
-                }
-
-                if let lastKnownCoordinate = sosStore.lastKnownCoordinate {
-                    MapViewAnnotation(coordinate: lastKnownCoordinate) {
-                        SOSLastKnownMarker(
-                            isActive: sosStore.isActive,
-                            accuracy: sosStore.lastKnownPoint?.horizontalAccuracy
-                        )
-                    }
-                    .allowOverlap(true)
-                    .allowZElevate(true)
-                }
-
-                ForEvery(activeMapIncidents) { incident in
-                    MapViewAnnotation(coordinate: incident.coordinate) {
-                        NavigationLink {
-                            IncidentDetailView(incident: incident)
-                        } label: {
-                            MapboxIncidentPin(incident: incident)
+                        ForEvery(sosStore.trailArtifacts) { artifact in
+                            MapViewAnnotation(coordinate: artifact.coordinate) {
+                                SOSTrailBreadcrumb(artifact: artifact)
+                            }
+                            .allowOverlap(true)
+                            .allowZElevate(true)
                         }
-                        .buttonStyle(.plain)
-                        .simultaneousGesture(TapGesture().onEnded {
-                            selectedIncident = incident
-                        })
-                    }
-                    .allowOverlap(true)
-                    .allowZElevate(true)
-                }
-            }
-            .mapStyle(.standard(lightPreset: .night))
-            .ornamentOptions(ornaments)
-            .ignoresSafeArea(edges: .bottom)
 
-            mapShade
-            mapHeader
-            mapSummary
-            SOSOverlayView()
+                        if let lastKnownCoordinate = sosStore.lastKnownCoordinate {
+                            MapViewAnnotation(coordinate: lastKnownCoordinate) {
+                                SOSLastKnownMarker(
+                                    isActive: sosStore.isActive,
+                                    accuracy: sosStore.lastKnownPoint?.horizontalAccuracy
+                                )
+                            }
+                            .allowOverlap(true)
+                            .allowZElevate(true)
+                        }
+
+                        ForEvery(mappableIncidents) { entry in
+                            MapViewAnnotation(coordinate: entry.coordinate) {
+                                NavigationLink {
+                                    IncidentDetailView(incident: entry.incident)
+                                } label: {
+                                    MapboxIncidentPin(incident: entry.incident)
+                                }
+                                .buttonStyle(.plain)
+                                .simultaneousGesture(TapGesture().onEnded {
+                                    selectedIncident = entry.incident
+                                })
+                            }
+                            .allowOverlap(true)
+                            .allowZElevate(true)
+                        }
+                    }
+                    .mapStyle(.standard(lightPreset: .night))
+                    .ornamentOptions(ornaments)
+                    .frame(width: proxy.size.width, height: proxy.size.height)
+                    .ignoresSafeArea(edges: .bottom)
+
+                    mapShade
+                    mapHeader
+                    mapSummary
+                    SOSOverlayView()
+                }
+            } else {
+                Color.black
+            }
         }
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.hidden, for: .navigationBar)
         .onAppear { locationManager.requestCurrentLocation() }
+        .onReceive(locationManager.$currentCoordinate) { coordinate in
+            guard let coordinate, !hasCenteredOnUser else { return }
+            hasCenteredOnUser = true
+            withAnimation(.snappy) {
+                viewport = .camera(center: coordinate, zoom: 15.1, bearing: -18, pitch: 44)
+            }
+        }
+        .overlay(alignment: .center) {
+            if needsLocationPrompt {
+                LocationPromptCard(
+                    status: locationManager.authorizationStatus,
+                    onRequestPermission: { locationManager.requestCurrentLocation() }
+                )
+                .padding(32)
+            }
+        }
+    }
+
+    /// Show the prompt only when there's nothing to center on and location won't
+    /// arrive without user action (undetermined/denied). If authorized, a fix is
+    /// already on the way, so we stay quiet.
+    private var needsLocationPrompt: Bool {
+        locationManager.currentCoordinate == nil
+            && LocationManager.lastKnownCoordinate == nil
+            && locationManager.authorizationStatus != .authorizedWhenInUse
+            && locationManager.authorizationStatus != .authorizedAlways
     }
 
     private var ornaments: OrnamentOptions {
@@ -222,6 +257,20 @@ struct MapboxIncidentMapView: View {
         return visibleIncidents.filter { $0.category == selectedCategory }
     }
 
+    // Pin-able incidents only (those with a known location), carrying the
+    // unwrapped coordinate so the Mapbox content builder stays optional-free.
+    private struct MappableIncident: Identifiable {
+        let incident: Incident
+        let coordinate: CLLocationCoordinate2D
+        var id: UUID { incident.id }
+    }
+
+    private var mappableIncidents: [MappableIncident] {
+        activeMapIncidents.compactMap { incident in
+            incident.coordinate.map { MappableIncident(incident: incident, coordinate: $0) }
+        }
+    }
+
     private var urgentCount: Int {
         activeMapIncidents.filter { $0.severity == .urgent || $0.severity == .high }.count
     }
@@ -232,7 +281,7 @@ struct MapboxIncidentMapView: View {
 
     private var nearestDistanceText: String? {
         guard let userCoord = locationManager.currentCoordinate,
-              let nearest = activeMapIncidents.min(by: {
+              let nearest = mappableIncidents.min(by: {
                   $0.coordinate.distance(to: userCoord) < $1.coordinate.distance(to: userCoord)
               }) else { return nil }
         return "nearest \(userCoord.shortFormattedDistance(to: nearest.coordinate))"

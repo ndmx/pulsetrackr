@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Template for app/GoogleService-Info.plist (which is git-ignored).
+
+  Download the real file from the Firebase Console:
+    Project settings → Your apps → iOS app
+    (org.pulsetracker.pulsetrackr.pulsetrackr) → GoogleService-Info.plist
+  and save it as app/GoogleService-Info.plist (no ".example" suffix).
+
+  The API_KEY below is not a true secret — it ships inside every app binary —
+  but the live key is kept out of git. Protect it via Google Cloud Console API
+  key restrictions (iOS bundle id + only the Firebase APIs you use) and Firebase
+  Security Rules, not by hiding it. See FIREBASE_SETUP.md.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>API_KEY</key>
+	<string>YOUR_FIREBASE_IOS_API_KEY</string>
+	<key>GCM_SENDER_ID</key>
+	<string>YOUR_GCM_SENDER_ID</string>
+	<key>PLIST_VERSION</key>
+	<string>1</string>
+	<key>BUNDLE_ID</key>
+	<string>org.pulsetracker.pulsetrackr.pulsetrackr</string>
+	<key>PROJECT_ID</key>
+	<string>YOUR_PROJECT_ID</string>
+	<key>STORAGE_BUCKET</key>
+	<string>YOUR_PROJECT_ID.firebasestorage.app</string>
+	<key>IS_ADS_ENABLED</key>
+	<false></false>
+	<key>IS_ANALYTICS_ENABLED</key>
+	<false></false>
+	<key>IS_APPINVITE_ENABLED</key>
+	<true></true>
+	<key>IS_GCM_ENABLED</key>
+	<true></true>
+	<key>IS_SIGNIN_ENABLED</key>
+	<true></true>
+	<key>GOOGLE_APP_ID</key>
+	<string>1:YOUR_GCM_SENDER_ID:ios:YOUR_APP_ID_SUFFIX</string>
+</dict>
+</plist>

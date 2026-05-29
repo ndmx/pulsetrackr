@@ -7,6 +7,27 @@ final class LocationManager: NSObject, ObservableObject {
 
     private let manager = CLLocationManager()
 
+    /// The most recent location we've ever seen, persisted across launches so the
+    /// map can open where the user was last instead of a hardcoded city. Readable
+    /// without a live instance (e.g. from a view's `@State` initializer).
+    static var lastKnownCoordinate: CLLocationCoordinate2D? {
+        let defaults = UserDefaults.standard
+        guard defaults.object(forKey: AppStorageKey.lastKnownLatitude) != nil,
+              defaults.object(forKey: AppStorageKey.lastKnownLongitude) != nil else { return nil }
+        let coordinate = CLLocationCoordinate2D(
+            latitude: defaults.double(forKey: AppStorageKey.lastKnownLatitude),
+            longitude: defaults.double(forKey: AppStorageKey.lastKnownLongitude)
+        )
+        return coordinate.isValid ? coordinate : nil
+    }
+
+    private static func persist(_ coordinate: CLLocationCoordinate2D) {
+        guard coordinate.isValid else { return }
+        let defaults = UserDefaults.standard
+        defaults.set(coordinate.latitude, forKey: AppStorageKey.lastKnownLatitude)
+        defaults.set(coordinate.longitude, forKey: AppStorageKey.lastKnownLongitude)
+    }
+
     override init() {
         authorizationStatus = manager.authorizationStatus
         super.init()
@@ -56,6 +77,7 @@ extension LocationManager: CLLocationManagerDelegate {
         guard let location = locations.last else { return }
         currentLocation = location
         currentCoordinate = location.coordinate
+        Self.persist(location.coordinate)
     }
 
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {

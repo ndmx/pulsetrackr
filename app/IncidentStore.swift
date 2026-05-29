@@ -6,23 +6,46 @@ final class IncidentStore: ObservableObject {
     // Not @Published — we call objectWillChange.send() manually so mutations go
     // in-place through the stored property's _modify accessor (O(1), no COW copy).
     // Views still react normally; ObservableObject only needs objectWillChange fired.
-    private(set) var incidents: [Incident] = Incident.seedIncidents
+    // Starts empty: real incidents arrive from the remote store. (Seed data lives in
+    // the DEBUG-only preview helper below so it never ships to users.)
+    private(set) var incidents: [Incident] = []
+
+    /// Set when a remote write (report submission, signal) ultimately fails so the UI can surface it.
+    @Published var lastSyncError: String?
 
     // O(1) lookup: id → stable index in the incidents array.
     // Local mutations keep indices stable; remote snapshots rebuild the lookup.
     private var lookup: [UUID: Int] = [:]
     private let remoteStore: SafetyIncidentRemoteStore?
 
+    // The region currently being observed, so we only re-subscribe when the user
+    // moves meaningfully or changes their radius (avoids listener thrash).
+    private var observedCenter: CLLocationCoordinate2D?
+    private var observedRadiusKm: Double?
+    private let resubscribeDistanceMeters: CLLocationDistance = 500
+
     init(remoteStore: SafetyIncidentRemoteStore? = SafetyIncidentRemoteStore.makeIfConfigured()) {
         self.remoteStore = remoteStore
         rebuildLookup()
         refreshActiveIncidents()
+    }
 
-        remoteStore?.observeActiveIncidents { [weak self] remoteIncidents in
-            Task {
-                await MainActor.run {
-                    self?.replaceIncidents(remoteIncidents)
-                }
+    /// Point the incident feed at the user's area. Call when location or the watch
+    /// radius changes; it re-subscribes only when the change is significant.
+    func updateObservedRegion(center: CLLocationCoordinate2D, radiusKm: Double) {
+        guard let remoteStore, center.isValid else { return }
+
+        if let observedCenter, let observedRadiusKm,
+           observedRadiusKm == radiusKm,
+           observedCenter.distance(to: center) < resubscribeDistanceMeters {
+            return
+        }
+        observedCenter = center
+        observedRadiusKm = radiusKm
+
+        remoteStore.observeIncidents(near: center, radiusMeters: radiusKm * 1_000) { [weak self] remoteIncidents in
+            Task { @MainActor in
+                self?.replaceIncidents(remoteIncidents)
             }
         }
     }
@@ -43,14 +66,18 @@ final class IncidentStore: ObservableObject {
         severity: IncidentSeverity,
         neighborhood: String,
         reporterCoordinate: CLLocationCoordinate2D?,
-        useApproximateLocation: Bool = true
+        useApproximateLocation: Bool = true,
+        status: IncidentStatus = .active,
+        evidenceUpdates: [String] = [],
+        evidenceAttachments: [IncidentEvidenceAttachment] = []
     ) {
-        let fallback = CLLocationCoordinate2D(latitude: 6.5244, longitude: 3.3792)
-        let publicCoordinate: CLLocationCoordinate2D
+        // No location shared → store nil rather than fabricating a pin at the
+        // default center. The incident still appears in the feed, just without a map pin.
+        let publicCoordinate: CLLocationCoordinate2D?
         if let exact = reporterCoordinate {
             publicCoordinate = useApproximateLocation ? Self.publicCoordinate(from: exact) : exact
         } else {
-            publicCoordinate = fallback
+            publicCoordinate = nil
         }
 
         let incident = Incident(
@@ -60,7 +87,7 @@ final class IncidentStore: ObservableObject {
             category: category,
             subtype: subtype.category == category ? subtype : IncidentSubtype.defaultSubtype(for: category),
             severity: severity,
-            status: .active,
+            status: status,
             reporterCoordinate: reporterCoordinate,
             coordinate: publicCoordinate,
             neighborhood: neighborhood.isEmpty ? "Nearby area" : neighborhood,
@@ -68,7 +95,7 @@ final class IncidentStore: ObservableObject {
             confirmations: 1,
             updates: [
                 IncidentUpdate(message: "Immediate nearby alert sent as an unconfirmed community report.", timestamp: Date())
-            ]
+            ] + evidenceUpdates.map { IncidentUpdate(message: $0, timestamp: Date()) }
         )
         // Append (O(1) amortised) keeps all existing indices stable in the lookup.
         objectWillChange.send()
@@ -77,6 +104,7 @@ final class IncidentStore: ObservableObject {
         refreshActiveIncidents()
 
         if let remoteStore {
+            let clientRef = UUID().uuidString
             let submittedTitle = incident.title
             let submittedSummary = incident.summary
             let submittedCategory = incident.category
@@ -84,17 +112,32 @@ final class IncidentStore: ObservableObject {
             let submittedSeverity = incident.severity
             let submittedNeighborhood = incident.neighborhood
             let submittedCoordinate = incident.reporterCoordinate
-            Task {
-                try? await remoteStore.submitIncident(
-                    title: submittedTitle,
-                    summary: submittedSummary,
-                    category: submittedCategory,
-                    subtype: submittedSubtype,
-                    severity: submittedSeverity,
-                    neighborhood: submittedNeighborhood,
-                    reporterCoordinate: submittedCoordinate,
-                    useApproximateLocation: useApproximateLocation
+            Task { [weak self] in
+                // Evidence upload is best-effort; the report itself must not be lost silently.
+                let uploadedEvidence = try? await remoteStore.uploadIncidentEvidence(
+                    evidenceAttachments,
+                    clientRef: clientRef
                 )
+                do {
+                    _ = try await Self.retrying {
+                        try await remoteStore.submitIncident(
+                            title: submittedTitle,
+                            summary: submittedSummary,
+                            category: submittedCategory,
+                            subtype: submittedSubtype,
+                            severity: submittedSeverity,
+                            status: status,
+                            neighborhood: submittedNeighborhood,
+                            reporterCoordinate: submittedCoordinate,
+                            useApproximateLocation: useApproximateLocation,
+                            clientRef: clientRef,
+                            evidence: uploadedEvidence ?? []
+                        )
+                    }
+                    self?.lastSyncError = nil
+                } catch {
+                    self?.lastSyncError = "We couldn't upload your report. Check your connection and try again."
+                }
             }
         }
     }
@@ -125,7 +168,10 @@ final class IncidentStore: ObservableObject {
             if isUrgent && !urgentAlerts { return false }
             if isCommunity && !communityAlerts { return false }
             guard let userCoord = coordinate else { return true }
-            return userCoord.distance(to: incident.coordinate) <= watchRadius * 1_000
+            // A locationless incident can't be matched to a radius — exclude it
+            // from distance-filtered "nearby" alerts.
+            guard let incidentCoord = incident.coordinate else { return false }
+            return userCoord.distance(to: incidentCoord) <= watchRadius * 1_000
         }
     }
 
@@ -179,13 +225,20 @@ final class IncidentStore: ObservableObject {
             let incidentID  = incident.id
             let newStatus   = incidents[index].status
             let newSeverity = incidents[index].severity
-            Task {
-                try? await remoteStore.recordSignal(
-                    signal,
-                    forIncidentWithID: incidentID,
-                    newStatus: newStatus,
-                    newSeverity: newSeverity
-                )
+            Task { [weak self] in
+                do {
+                    try await Self.retrying {
+                        try await remoteStore.recordSignal(
+                            signal,
+                            forIncidentWithID: incidentID,
+                            newStatus: newStatus,
+                            newSeverity: newSeverity
+                        )
+                    }
+                    self?.lastSyncError = nil
+                } catch {
+                    self?.lastSyncError = "We couldn't sync that update. Check your connection and try again."
+                }
             }
         }
     }
@@ -214,9 +267,41 @@ final class IncidentStore: ObservableObject {
             lookup[incident.id] = i
         }
     }
+
+    /// Retries a remote operation with linear backoff before giving up.
+    private static func retrying<T>(
+        attempts: Int = 3,
+        _ operation: () async throws -> T
+    ) async throws -> T {
+        var lastError: Error?
+        for attempt in 0..<attempts {
+            do {
+                return try await operation()
+            } catch {
+                lastError = error
+                if attempt < attempts - 1 {
+                    try? await Task.sleep(for: .seconds(Double(attempt + 1) * 2))
+                }
+            }
+        }
+        throw lastError ?? CancellationError()
+    }
 }
 
+#if DEBUG
+extension IncidentStore {
+    /// In-memory store populated with sample incidents, for SwiftUI previews only.
+    static var preview: IncidentStore {
+        let store = IncidentStore(remoteStore: nil)
+        store.replaceIncidents(Incident.seedIncidents)
+        return store
+    }
+}
+#endif
+
+#if DEBUG
 extension Incident {
+    /// Sample incidents for SwiftUI previews only — never shipped in release builds.
     static let seedIncidents: [Incident] = [
         Incident(
             id: UUID(),
@@ -307,3 +392,4 @@ extension Incident {
         )
     ]
 }
+#endif

@@ -14,7 +14,9 @@ struct IncidentDetailView: View {
             VStack(alignment: .leading, spacing: 20) {
                 header
                 communityActions
-                directionsSection
+                if liveIncident.hasLocation {
+                    directionsSection
+                }
                 detailCard
                 updatesSection
             }
@@ -212,9 +214,11 @@ struct IncidentDetailView: View {
     }
 }
 
+#if DEBUG
 #Preview {
     NavigationStack {
         IncidentDetailView(incident: Incident.seedIncidents[0])
-            .environmentObject(IncidentStore())
+            .environmentObject(IncidentStore.preview)
     }
 }
+#endif

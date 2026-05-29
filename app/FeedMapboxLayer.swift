@@ -5,34 +5,70 @@ import SwiftUI
 
 struct FeedMapboxLayer: View {
     var incidents: [Incident]
-    @State private var viewport: Viewport = .camera(
-        center: CLLocationCoordinate2D(latitude: 6.5244, longitude: 3.3792),
-        zoom: 14.7,
-        bearing: -18,
-        pitch: 44
-    )
+    var userCoordinate: CLLocationCoordinate2D?
+
+    @State private var hasCenteredOnUser = false
+
+    // Only incidents with a known location can be pinned. Carrying the unwrapped
+    // coordinate avoids optionals inside the Mapbox content builder.
+    private struct MappableIncident: Identifiable {
+        let incident: Incident
+        let coordinate: CLLocationCoordinate2D
+        var id: UUID { incident.id }
+    }
+
+    private var mappableIncidents: [MappableIncident] {
+        incidents.compactMap { incident in
+            incident.coordinate.map { MappableIncident(incident: incident, coordinate: $0) }
+        }
+    }
+
+    @State private var viewport: Viewport = {
+        if let last = LocationManager.lastKnownCoordinate {
+            return .camera(center: last, zoom: 14.7, bearing: -18, pitch: 44)
+        }
+        // Brand-new user: open on a flat world view, not an arbitrary city.
+        return .camera(center: MapDefaults.worldCenter, zoom: MapDefaults.worldMapboxZoom, bearing: 0, pitch: 0)
+    }()
 
     var body: some View {
-        Map(viewport: $viewport) {
-            Puck2D(bearing: .heading)
-                .showsAccuracyRing(true)
+        GeometryReader { proxy in
+            if proxy.size.width > 1, proxy.size.height > 1 {
+                Map(viewport: $viewport) {
+                    Puck2D(bearing: .heading)
+                        .showsAccuracyRing(true)
 
-            ForEvery(incidents) { incident in
-                MapViewAnnotation(coordinate: incident.coordinate) {
-                    NavigationLink {
-                        IncidentDetailView(incident: incident)
-                    } label: {
-                        FeedMapboxPin(incident: incident)
+                    ForEvery(mappableIncidents) { entry in
+                        MapViewAnnotation(coordinate: entry.coordinate) {
+                            NavigationLink {
+                                IncidentDetailView(incident: entry.incident)
+                            } label: {
+                                FeedMapboxPin(incident: entry.incident)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                        .allowOverlap(true)
+                        .allowZElevate(true)
                     }
-                    .buttonStyle(.plain)
                 }
-                .allowOverlap(true)
-                .allowZElevate(true)
+                .mapStyle(.standard(lightPreset: .night))
+                .ornamentOptions(ornaments)
+                .frame(width: proxy.size.width, height: proxy.size.height)
+                .ignoresSafeArea()
+            } else {
+                Color.black
             }
         }
-        .mapStyle(.standard(lightPreset: .night))
-        .ornamentOptions(ornaments)
-        .ignoresSafeArea()
+        .onChange(of: userCoordinate?.latitude) { _, _ in centerOnUserOnce() }
+        .onAppear { centerOnUserOnce() }
+    }
+
+    private func centerOnUserOnce() {
+        guard !hasCenteredOnUser, let userCoordinate, userCoordinate.isValid else { return }
+        hasCenteredOnUser = true
+        withAnimation(.snappy) {
+            viewport = .camera(center: userCoordinate, zoom: 14.7, bearing: -18, pitch: 44)
+        }
     }
 
     private var ornaments: OrnamentOptions {

@@ -1,10 +1,3 @@
-//
-//  ContentView.swift
-//  pulsetrackr
-//
-//  Created by Alexander Ukaga on 8/14/25.
-//
-
 import SwiftUI
 
 struct ContentView: View {
@@ -16,6 +9,7 @@ struct ContentView: View {
     @AppStorage(AppStorageKey.hasSeenLaunch) private var hasSeenLaunch = false
     @AppStorage(AppStorageKey.launchLastSeenAt) private var launchLastSeenAt = 0.0
     @AppStorage(AppStorageKey.launchLastSeenVersion) private var launchLastSeenVersion = ""
+    @AppStorage(AppStorageKey.watchRadius) private var watchRadius = 3.0
 
     private let welcomeResetInterval: TimeInterval = 30 * 24 * 60 * 60
 
@@ -111,6 +105,11 @@ struct ContentView: View {
         .onReceive(locationManager.$currentLocation) { location in
             guard let location else { return }
             sosStore.record(location: location)
+            incidentStore.updateObservedRegion(center: location.coordinate, radiusKm: watchRadius)
+        }
+        .onChange(of: watchRadius) { _, newRadius in
+            guard let coordinate = locationManager.currentCoordinate else { return }
+            incidentStore.updateObservedRegion(center: coordinate, radiusKm: newRadius)
         }
         .onReceive(sosStore.$session) { session in
             locationManager.setEmergencyTrackingActive(session?.isActive == true)

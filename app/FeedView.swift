@@ -46,11 +46,9 @@ struct FeedView: View {
     @AppStorage(AppStorageKey.watchRadius) private var watchRadius = 3.0
     @AppStorage(AppStorageKey.urgentAlerts) private var urgentAlerts = true
     @AppStorage(AppStorageKey.communityAlerts) private var communityAlerts = true
-    @State private var cameraPosition: MapCameraPosition = .region(
-        MKCoordinateRegion(
-            center: CLLocationCoordinate2D(latitude: 6.5244, longitude: 3.3792),
-            span: MKCoordinateSpan(latitudeDelta: 0.065, longitudeDelta: 0.065)
-        )
+    @State private var hasCenteredOnUser = false
+    @State private var cameraPosition: MapCameraPosition = MapDefaults.initialRegion(
+        citySpan: MKCoordinateSpan(latitudeDelta: 0.065, longitudeDelta: 0.065)
     )
 
     private var settingsFilteredIncidents: [Incident] {
@@ -138,12 +136,27 @@ struct FeedView: View {
         .toolbar(.hidden, for: .navigationBar)
         .preferredColorScheme(.dark)
         .onAppear { locationManager.requestCurrentLocation() }
+        .onReceive(locationManager.$currentCoordinate) { coordinate in
+            guard let coordinate, !hasCenteredOnUser else { return }
+            hasCenteredOnUser = true
+            withAnimation(.easeInOut(duration: 0.6)) {
+                cameraPosition = .region(
+                    MKCoordinateRegion(
+                        center: coordinate,
+                        span: MKCoordinateSpan(latitudeDelta: 0.05, longitudeDelta: 0.05)
+                    )
+                )
+            }
+        }
     }
 
     @ViewBuilder
     private var mapLayer: some View {
         #if canImport(MapboxMaps)
-        FeedMapboxLayer(incidents: settingsFilteredIncidents)
+        FeedMapboxLayer(
+            incidents: settingsFilteredIncidents,
+            userCoordinate: locationManager.currentCoordinate
+        )
         #else
         appleMapLayer
         #endif
@@ -154,13 +167,15 @@ struct FeedView: View {
             UserAnnotation()
 
             ForEach(settingsFilteredIncidents) { incident in
-                Annotation(incident.title, coordinate: incident.coordinate) {
-                    NavigationLink {
-                        IncidentDetailView(incident: incident)
-                    } label: {
-                        FeedMapPin(incident: incident)
+                if let coordinate = incident.coordinate {
+                    Annotation(incident.title, coordinate: coordinate) {
+                        NavigationLink {
+                            IncidentDetailView(incident: incident)
+                        } label: {
+                            FeedMapPin(incident: incident)
+                        }
+                        .buttonStyle(.plain)
                     }
-                    .buttonStyle(.plain)
                 }
             }
         }
@@ -541,8 +556,10 @@ private struct IncidentCard: View {
     var userCoordinate: CLLocationCoordinate2D?
 
     private var distanceText: String {
-        guard let userCoord = userCoordinate else { return incident.neighborhood }
-        return userCoord.formattedDistance(to: incident.coordinate)
+        guard let userCoord = userCoordinate, let coord = incident.coordinate else {
+            return incident.neighborhood
+        }
+        return userCoord.formattedDistance(to: coord)
     }
 
     var body: some View {
@@ -638,10 +655,12 @@ private struct EmptyFeedState: View {
     }
 }
 
+#if DEBUG
 #Preview {
     NavigationStack {
         FeedView()
-            .environmentObject(IncidentStore())
+            .environmentObject(IncidentStore.preview)
             .environmentObject(LocationManager())
     }
 }
+#endif

@@ -9,6 +9,7 @@ const {
   providerReadiness,
   sendNotificationAttempt,
 } = require('./notificationProviders');
+const { encodeGeohash } = require('./geohash');
 const {
   HARD_LIMITS,
   makeIdempotencyKey,
@@ -42,6 +43,69 @@ const callableOptions = {
     sendgridFromEmail,
   ],
 };
+
+exports.submit_incident = onCall(callableOptions, async (request) => {
+  const uid = requireAuth(request);
+  const now = new Date();
+  const payload = sanitizeIncidentPayload(request.data || {}, uid);
+  const privateRef = db.collection('safety_reports_private').doc();
+  const publicRef = db.collection('safety_incidents_public').doc(privateRef.id);
+  const publicCoordinate = payload.useApproximateLocation
+    ? approximateCoordinate(payload.latitude, payload.longitude)
+    : { latitude: payload.latitude, longitude: payload.longitude };
+
+  await db.runTransaction(async (transaction) => {
+    transaction.set(privateRef, withoutUndefined({
+      ownerUid: uid,
+      clientRef: payload.clientRef,
+      title: payload.title,
+      summary: payload.summary,
+      category: payload.category,
+      subtype: payload.subtype,
+      severity: payload.severity,
+      status: payload.status,
+      neighborhood: payload.neighborhood,
+      latitude: payload.latitude,
+      longitude: payload.longitude,
+      useApproximateLocation: payload.useApproximateLocation,
+      evidence: payload.evidence,
+      source: payload.source,
+      createdAt: FieldValue.serverTimestamp(),
+      deleteAfter: Timestamp.fromDate(retentionDate(now)),
+    }));
+
+    transaction.set(publicRef, withoutUndefined({
+      title: payload.title,
+      summary: payload.summary,
+      category: payload.category,
+      subtype: payload.subtype,
+      severity: payload.severity,
+      status: payload.status,
+      neighborhood: payload.neighborhood || 'Nearby area',
+      latitude: publicCoordinate.latitude,
+      longitude: publicCoordinate.longitude,
+      geohash: encodeGeohash(publicCoordinate.latitude, publicCoordinate.longitude),
+      confirmations: 1,
+      disputes: 0,
+      unsafe_reports: 0,
+      blocked_reports: 0,
+      cleared_reports: 0,
+      official_updates: 0,
+      evidence_summary: {
+        photo_count: payload.evidence.filter((item) => item.kind === 'photo').length,
+        voice_count: payload.evidence.filter((item) => item.kind === 'voice').length,
+      },
+      reported_at: Timestamp.fromDate(now),
+      updated_at: FieldValue.serverTimestamp(),
+      source: payload.source,
+    }));
+  });
+
+  return {
+    incident_id: publicRef.id,
+    evidence_count: payload.evidence.length,
+  };
+});
 
 exports.activate_sos = onCall(callableOptions, async (request) => {
   const uid = requireAuth(request);
@@ -556,6 +620,96 @@ function plainLocation(location) {
     course_degrees: location.courseDegrees,
     captured_at: timestampToIso(location.capturedAt),
   });
+}
+
+function sanitizeIncidentPayload(data, uid) {
+  const clientRef = cleanString(data.client_ref, 80) || '';
+  if (!clientRef) {
+    throw new HttpsError('invalid-argument', 'client_ref is required');
+  }
+
+  const title = cleanString(data.title, 120);
+  const summary = cleanString(data.summary, 2000);
+  if (!title || !summary) {
+    throw new HttpsError('invalid-argument', 'title and summary are required');
+  }
+
+  const latitude = data.latitude === undefined ? 6.5244 : Number(data.latitude);
+  const longitude = data.longitude === undefined ? 3.3792 : Number(data.longitude);
+  if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90
+    || !Number.isFinite(longitude) || longitude < -180 || longitude > 180) {
+    throw new HttpsError('invalid-argument', 'A valid latitude and longitude are required');
+  }
+
+  const evidence = Array.isArray(data.evidence)
+    ? data.evidence.slice(0, 4).map((item) => sanitizeIncidentEvidence(item, uid, clientRef))
+    : [];
+
+  return {
+    clientRef,
+    title,
+    summary,
+    category: cleanString(data.category, 80) || 'community',
+    subtype: cleanString(data.subtype, 80) || 'local_warning',
+    severity: cleanString(data.severity, 40) || 'Medium',
+    status: cleanString(data.status, 40) || 'Active',
+    neighborhood: cleanString(data.neighborhood, 120) || 'Nearby area',
+    latitude,
+    longitude,
+    useApproximateLocation: data.use_approximate_location !== false,
+    source: cleanString(data.source, 40) || 'ios',
+    evidence,
+  };
+}
+
+function sanitizeIncidentEvidence(item, uid, clientRef) {
+  const kind = cleanString(item?.kind, 20);
+  const storagePath = cleanString(item?.storage_path, 500);
+  const contentType = cleanString(item?.content_type, 120);
+  const sizeBytes = Number(item?.size_bytes);
+  const durationSeconds = Number(item?.duration_seconds);
+  const requiredPrefix = `incident_reports/${uid}/${clientRef}/`;
+
+  if (!['photo', 'voice'].includes(kind)) {
+    throw new HttpsError('invalid-argument', 'Unsupported evidence kind');
+  }
+  if (!storagePath || !storagePath.startsWith(requiredPrefix)) {
+    throw new HttpsError('permission-denied', 'Evidence path must belong to the signed-in reporter');
+  }
+  if (!Number.isFinite(sizeBytes) || sizeBytes <= 0 || sizeBytes > 10 * 1024 * 1024) {
+    throw new HttpsError('invalid-argument', 'Evidence file size is invalid');
+  }
+  if (kind === 'photo' && !contentType.startsWith('image/')) {
+    throw new HttpsError('invalid-argument', 'Photo evidence must be an image');
+  }
+  if (kind === 'voice' && !contentType.startsWith('audio/')) {
+    throw new HttpsError('invalid-argument', 'Voice evidence must be audio');
+  }
+
+  return withoutUndefined({
+    kind,
+    storagePath,
+    contentType,
+    sizeBytes,
+    durationSeconds: Number.isFinite(durationSeconds) ? durationSeconds : undefined,
+  });
+}
+
+function approximateCoordinate(latitude, longitude) {
+  const minimumMeters = 140;
+  const maximumMeters = 260;
+  const distance = minimumMeters + Math.random() * (maximumMeters - minimumMeters);
+  const bearing = Math.random() * 2 * Math.PI;
+  const latitudeMeters = 111320;
+  const longitudeMeters = Math.max(Math.cos(latitude * Math.PI / 180) * latitudeMeters, 1);
+  return {
+    latitude: latitude + (Math.cos(bearing) * distance / latitudeMeters),
+    longitude: longitude + (Math.sin(bearing) * distance / longitudeMeters),
+  };
+}
+
+function cleanString(value, maxLength) {
+  return typeof value === 'string' ? value.trim().slice(0, maxLength) : '';
 }
 
 function retentionDate(now) {

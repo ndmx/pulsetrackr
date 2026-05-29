@@ -52,9 +52,10 @@ struct SecurityTests {
             neighborhood: "Test", reporterCoordinate: exact
         )
         let added = store.incidents.last!
+        let pub = added.coordinate!
         // The public coordinate must not match the reporter's exact position
-        let sameLocation = added.coordinate.latitude == exact.latitude &&
-                           added.coordinate.longitude == exact.longitude
+        let sameLocation = pub.latitude == exact.latitude &&
+                           pub.longitude == exact.longitude
         #expect(!sameLocation, "Public coordinate must be fuzzed away from exact location")
     }
 
@@ -67,7 +68,7 @@ struct SecurityTests {
             neighborhood: "Test", reporterCoordinate: exact
         )
         let added = store.incidents.last!
-        let pub = added.coordinate
+        let pub = added.coordinate!
 
         // Convert degree difference to approximate metres
         let latMetres = abs(pub.latitude  - exact.latitude)  * 111_320.0
@@ -95,8 +96,9 @@ struct SecurityTests {
         #expect(reporter.latitude  == exact.latitude)
         #expect(reporter.longitude == exact.longitude)
         // The public coordinate is different
-        #expect(added.coordinate.latitude  != reporter.latitude  ||
-                added.coordinate.longitude != reporter.longitude)
+        let pub = added.coordinate!
+        #expect(pub.latitude  != reporter.latitude  ||
+                pub.longitude != reporter.longitude)
     }
 
     @Test @MainActor func noReporterCoordinateStoresNilInstead() {
@@ -106,7 +108,10 @@ struct SecurityTests {
             category: .community, subtype: .localWarning, severity: .low,
             neighborhood: "Test", reporterCoordinate: nil
         )
-        #expect(store.incidents.last!.reporterCoordinate == nil)
+        let added = store.incidents.last!
+        #expect(added.reporterCoordinate == nil)
+        // No location shared → no fabricated public pin either.
+        #expect(added.coordinate == nil)
     }
 
     // MARK: - Input sanitisation at system boundary (classifier)

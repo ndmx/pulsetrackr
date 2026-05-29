@@ -301,7 +301,13 @@ final class SOSStore: ObservableObject {
         remoteSessionID = response.sessionID
         alertedContactIDs = Set(response.trustedContactsNotified)
         if !response.trustedContactsNotified.isEmpty {
-            try? contactStore.markNotified(contactIDs: response.trustedContactsNotified)
+            // Contacts were alerted remotely; failing to persist that locally must not
+            // fail the SOS activation, but it shouldn't vanish silently either.
+            do {
+                try contactStore.markNotified(contactIDs: response.trustedContactsNotified)
+            } catch {
+                trustedContactError = "Your contacts were alerted, but we couldn't update their status on this device."
+            }
             loadTrustedContacts()
         }
         markEvents(ofKind: .started, status: .delivered)

@@ -1,6 +1,6 @@
 # PulseTrackr — Project Wiki
 
-> Community safety incident reporter for Lagos. Crowd-sourced reports, real-time map, Firebase backend.
+> Community safety incident reporter. Crowd-sourced reports, geo-bounded real-time map, Firebase backend. Built for global (multi-region) release: incidents are queried by proximity to the user, distances and copy localize per locale.
 
 ---
 
@@ -14,6 +14,7 @@
 6. [Shared State (AppStorage)](#6-shared-state-appstorage)
 7. [Duplication & Efficiency Notes](#7-duplication--efficiency-notes)
 8. [SOS Backend & Privacy Contract](#8-sos-backend--privacy-contract)
+9. [Geo-scaling, Units & Localization](#9-geo-scaling-units--localization)
 
 ---
 
@@ -32,21 +33,27 @@ ContentView (root)
         └── SettingsView
 
 Data Layer
-  ├── Incident.swift          → domain model (all enums + struct)
-  ├── IncidentStore           → @MainActor ObservableObject, CRUD, seed data
-  ├── SafetyIncidentRemoteStore → Firebase Firestore listener + Functions submit
-  ├── SOSRemoteStore          → Firebase Functions SOS activate/update/resolve
+  ├── Incident.swift          → domain model (all enums + struct; optional coordinate)
+  ├── IncidentStore           → @MainActor ObservableObject, CRUD, geo-region subscription
+  ├── SafetyIncidentRemoteStore → Firestore geohash-bounded listeners + Functions submit
+  ├── Geohash.swift           → standard geohash encode + neighbour/covering-cell logic
+  ├── SOSRemoteStore / SOSStore → Firebase Functions SOS activate/update/resolve + queue
   ├── SOSTrustedContact       → local trusted-contact model + Keychain helper
   ├── SOSPrivacyPolicy        → client-side SOS sharing limits
   ├── IncidentClassifier      → keyword-based auto-classification
-  └── LocationManager         → shared CLLocationManager wrapper
+  ├── LocationManager         → shared CLLocationManager wrapper (persists last-known)
+  └── MapDefaults             → shared initial-camera logic (last-known / world view)
 
 External
   ├── Firebase Auth           → anonymous sign-in before submissions
-  ├── Firebase Firestore      → safety_incidents_public collection (snapshot listener)
-  ├── Firebase Functions      → submit_incident + SOS callables
+  ├── Firebase Firestore      → safety_incidents_public (geohash prefix-range listeners)
+  ├── Firebase Functions      → submit_incident (writes geohash) + SOS callables
+  ├── Firebase Storage        → incident photo/voice evidence, scoped to reporter uid
   ├── Twilio / SendGrid       → optional trusted-contact SOS delivery providers
   └── Mapbox Maps SDK         → conditional compile (#if canImport(MapboxMaps))
+
+Localization
+  └── Localizable.xcstrings   → String Catalog (en source; es wired as example)
 ```
 
 ---
@@ -95,7 +102,9 @@ graph LR
 
     IDV[IncidentDetailView] -->|record signal| IS
     RIV[ReportIncidentView] -->|addIncident| IS
-    RS[SafetyIncidentRemoteStore] -->|replaceIncidents snapshot| IS
+    CV[ContentView] -->|updateObservedRegion center+radius| IS
+    IS -->|observeIncidents near:radius| RS[SafetyIncidentRemoteStore]
+    RS -->|merged + distance-filtered snapshot| IS
 
     IS -->|activeIncidents| MIMV[MapboxIncidentMapView]
     IS -->|activeIncidents| IMV[IncidentMapView]
@@ -121,7 +130,7 @@ graph LR
 |------|------|-----------|-------|--------|
 | `pulsetrackrApp.swift` | App entry | `pulsetrackrApp` | — | calls `FirebaseBootstrap` |
 | `FirebaseBootstrap.swift` | Firebase init guard | `FirebaseBootstrap` | Bundle plist | `FirebaseApp.configure()` |
-| `ContentView.swift` | Root tab view | `ContentView`, `AppTab` | `@AppStorage hasSeenLaunch` | — |
+| `ContentView.swift` | Root tab view; drives geo-region subscription from location + radius | `ContentView`, `AppTab` | `@AppStorage hasSeenLaunch/watchRadius`, `LocationManager` | calls `IncidentStore.updateObservedRegion`, `SOSStore.record` |
 | `LaunchView.swift` | Onboarding splash | `LaunchView`, `FeatureRow` | — | `@AppStorage hasSeenLaunch` via callback |
 | `PulseMapView.swift` | Map tab facade | `PulseMapView` | — | — |
 | `MapboxIncidentMapView.swift` | Map (Mapbox) | `MapboxIncidentMapView` + 4 private views | `IncidentStore`, `LocationManager`, `@AppStorage watchRadius/urgentAlerts/communityAlerts` | — |
@@ -131,9 +140,17 @@ graph LR
 | `IncidentDetailView.swift` | Incident detail | `IncidentDetailView` + `detailPanel()` modifier | `IncidentStore.incident(withID:)` | `IncidentStore.record(_:for:)` |
 | `ReportIncidentView.swift` | Report new incident | `ReportIncidentView` + 9 private views | `LocationManager`, `IncidentClassifier`, `@AppStorage useApproximateLocation` | `IncidentStore.addIncident(...)` |
 | `SettingsView.swift` | Settings | `SettingsView` + 4 private views | `@AppStorage` (4 keys) | `@AppStorage` (4 keys) |
-| `Incident.swift` | Domain model | `Incident`, `IncidentCategory`, `IncidentSubtype`, `IncidentSeverity`, `IncidentStatus`, `IncidentConfidence`, `CommunitySignal`, `IncidentUpdate` + `CLLocationCoordinate2D` extensions | — | — (value types) |
-| `IncidentStore.swift` | State manager + seed data | `IncidentStore` + `Incident.seedIncidents` extension | `SafetyIncidentRemoteStore` (optional) | self: in-place O(1) mutation via `lookup[UUID:Int]` |
-| `SafetyIncidentRemoteStore.swift` | Firebase integration | `SafetyIncidentRemoteStore`, `SafetyIncidentRemoteStoreError` | Firestore `safety_incidents_public` | Firestore via `submit_incident` Function |
+| `Incident.swift` | Domain model | `Incident`, `IncidentCategory`, `IncidentSubtype`, `IncidentSeverity`, `IncidentStatus`, `IncidentConfidence`, `CommunitySignal`, `IncidentUpdate` + `CLLocationCoordinate2D` extensions (`pulseDefaultCenter`, `isValid`, locale-aware distance) | — | — (value types) |
+| `IncidentStore.swift` | State manager + geo-region subscription | `IncidentStore`; `Incident.seedIncidents` is **`#if DEBUG` only** (previews) | `SafetyIncidentRemoteStore` (optional) | self: in-place O(1) mutation via `lookup[UUID:Int]`; `@Published lastSyncError` |
+| `SafetyIncidentRemoteStore.swift` | Firebase integration; geohash-bounded feed | `SafetyIncidentRemoteStore`, `SafetyIncidentRemoteStoreError` | Firestore `safety_incidents_public` via per-prefix `geohash` range listeners | Firestore via `submit_incident` Function; Storage evidence |
+| `Geohash.swift` | Geohash encode + neighbour/covering-cell + radius→precision | `Geohash` (enum) | — | — (pure) |
+| `MapDefaults.swift` | Shared initial-camera logic | `MapDefaults` | `LocationManager.lastKnownCoordinate` | — |
+| `SharedComponents.swift` | Reusable UI: `cardPanel()`, `CategoryChip`, `LocationPromptCard` | view modifier + 2 views | `CLAuthorizationStatus` | opens Settings / requests permission |
+| `AppStorageKey.swift` | Centralized `@AppStorage` key names | `AppStorageKey` enum | — | — |
+| `SOSStore.swift` | SOS session/trail state machine + upload queue | `SOSStore` | `SOSRemoteStore`, `SOSTrustedContactStore`, `SOSPrivacyPolicy` | enqueues + syncs SOS events; `@Published` errors |
+| `Localizable.xcstrings` | String Catalog (en source; es example) | — | resolved by `Text`/`LocalizedStringKey` | — |
+| `functions/src/geohash.js` | Server geohash encoder (matches `Geohash.swift`) | `encodeGeohash` | lat/lon | `geohash` field on public incidents |
+| `storage.rules` | Storage access rules | — | Auth uid | reporter-owned image/audio only, ≤10 MB |
 | `SOSRemoteStore.swift` | SOS Firebase Functions API | `SOSRemoteStore`, `SOSActivationPayload`, `SOSLocationUpdatePayload`, `SOSResolutionPayload` | Firebase configured state | Functions `activate_sos`, `append_sos_location`, `resolve_sos` |
 | `SOSTrustedContact.swift` | Local SOS contacts | `SOSTrustedContact`, `SOSTrustedContactStore`, notification target payloads | Keychain generic password item | Keychain generic password item |
 | `SOSPrivacyPolicy.swift` | SOS sharing limits | `SOSPrivacyPolicy`, `SOSPayloadCoding` | — | — |
@@ -143,7 +160,7 @@ graph LR
 | `functions/src/sosShared.js` | SOS backend validation helpers | payload sanitizers, idempotency helpers | callable payloads | pure values |
 | `functions/src/notificationProviders.js` | SOS notification adapters | Twilio SMS/voice, SendGrid email | provider secrets | provider delivery APIs |
 | `IncidentClassifier.swift` | Text classification | `IncidentClassifier`, `IncidentClassification` | title + summary strings | — (pure function) |
-| `LocationManager.swift` | Location wrapper | `LocationManager` | `CLLocationManager` | publishes `currentCoordinate`, `authorizationStatus` |
+| `LocationManager.swift` | Location wrapper | `LocationManager` | `CLLocationManager` | publishes `currentCoordinate`, `authorizationStatus`; persists last-known coord to `UserDefaults` |
 
 ---
 
@@ -159,7 +176,7 @@ Incident
  ├── subtype: IncidentSubtype     → category, label, icon, isAlwaysHighRisk
  ├── severity: IncidentSeverity   → low / medium / high / urgent
  ├── status: IncidentStatus       → active / watching / resolved
- ├── coordinate: CLLocationCoordinate2D   (fuzzy public coord)
+ ├── coordinate: CLLocationCoordinate2D?  (fuzzy public coord; nil = location not shared)
  ├── reporterCoordinate: CLLocationCoordinate2D?  (exact, private)
  ├── reportedAt: Date
  ├── confirmations, disputes, unsafeReports, blockedReports, clearedReports, officialUpdates: Int
@@ -174,8 +191,10 @@ Incident
 | `isHighRisk` | severity == .urgent/.high OR subtype.isAlwaysHighRisk OR unsafeReports > 0 |
 | `alertTone` | resolved → "No longer active"; isHighRisk → "Nearby alert sent"; else → "Live local report" |
 | `signalSummary` | "X seen • X not seen • X unsafe • X cleared" |
-| `googleMapsAreaURL` | Google Maps search at coordinate |
-| `googleMapsDirectionsURL` | Google Maps driving directions to coordinate |
+| `hasLocation` | `coordinate?.isValid == true` — gates map pins and the directions UI |
+| `googleMapsAreaURL` / `googleMapsDirectionsURL` | Built with `URLComponents` (no force-unwrap); fall back to the default center only when location is unknown (and the directions UI is hidden in that case) |
+
+> **Note:** `coordinate` is optional. A report submitted with no location stores `nil` (it still appears in the feed, but is not pinned on the map and shows no distance/directions). The remote decoder also yields `nil` when a doc has no `latitude`/`longitude`, rather than fabricating a default pin. The public `coordinate` is also written with a `geohash` server-side for proximity queries (see §9).
 
 ### Category → Subtype Hierarchy
 
@@ -209,26 +228,35 @@ User types title/summary
   → user accepts or manually overrides category/subtype/severity
   → LocationManager.currentCoordinate captured
   → IncidentStore.addIncident(...)
-      ├── publicCoordinate = fuzz(exact, 140–260m random offset)
+      ├── publicCoordinate = exact ? fuzz(exact, 140–260m offset) : nil   (no fake pin)
       ├── append to incidents array (O(1) amortized)
       ├── update lookup[UUID → index]
-      └── if remoteStore: Task { submitIncident(...) }
-            ├── ensureSignedIn() → Firebase anonymous auth
-            └── functions.httpsCallable("submit_incident").call(payload)
+      └── if remoteStore: Task { ... }
+            ├── (best-effort) uploadIncidentEvidence(...)
+            ├── retrying(3×, backoff) { submitIncident(...) }   ← no silent try?
+            │     ├── ensureSignedIn() → Firebase anonymous auth
+            │     └── functions.httpsCallable("submit_incident").call(payload)
+            └── on failure → set IncidentStore.lastSyncError (surfaced to UI)
 ```
 
-### Remote Sync (Firestore Listener)
+### Remote Sync (geohash-bounded listeners)
+
+The feed is **proximity-bounded** — it no longer streams every incident worldwide
+(critical for a global release). See §9 for the geohash mechanics.
 
 ```
-IncidentStore.init
-  └── SafetyIncidentRemoteStore.observeActiveIncidents { incidents in }
-        └── Firestore: safety_incidents_public
-              .where status in [active, watching]
-              .orderBy reported_at desc
-              .addSnapshotListener
-                → on change: replaceIncidents(remoteIncidents)
-                    → incidents = remoteIncidents
-                    → rebuildLookup()  [O(n)]
+ContentView (on location fix or watchRadius change)
+  └── IncidentStore.updateObservedRegion(center:, radiusKm:)   [re-subscribes if moved >500m or radius changed]
+        └── SafetyIncidentRemoteStore.observeIncidents(near:, radiusMeters:) { incidents in }
+              ├── Geohash.coveringPrefixes(center, radius)  → centre cell + 8 neighbours
+              └── one snapshot listener per prefix:
+                    safety_incidents_public
+                      .order(by: geohash).start(at: prefix).end(before: prefix+"~").limit(200)
+                  → on any listener change:
+                      merge buckets → filter (active/watching AND distance ≤ radius) → sort by date
+                      → replaceIncidents(...)  → rebuildLookup() [O(n)]
+
+No location yet / permission denied → no subscription → empty feed + LocationPromptCard.
 ```
 
 ### Community Signal
@@ -245,12 +273,18 @@ IncidentDetailView → user taps signal button
 ### Feed/Map Filtering Pipeline
 
 ```
+(incidents already proximity-bounded server-side to the watch radius — see §9)
 IncidentStore.activeIncidents          [status != resolved, sorted by date]
-  → filter by urgentAlerts / communityAlerts (@AppStorage)
-  → filter by watchRadius * 1000m from locationManager.currentCoordinate
+  → IncidentStore.nearbyIncidents(urgentAlerts:communityAlerts:watchRadius:near:)
+       ├── filter by urgentAlerts / communityAlerts (@AppStorage)
+       └── filter by watchRadius * 1000m from locationManager.currentCoordinate
+           (locationless incidents are excluded from the radius filter)
   → [FeedView] scope filter: all / priority / new / verified
   → [FeedView] category chip filter
   → [FeedView] search text filter (title, summary, neighborhood, category, subtype)
+
+Distances shown to the user format per locale (m/km vs ft/mi) — see §9.
+Map pins are only drawn for incidents with a non-nil coordinate.
 ```
 
 ---
@@ -266,29 +300,22 @@ These keys are read/written across multiple files. Changing a key name requires 
 | `urgentAlerts` | Bool | true | `FeedView`, `IncidentMapView`, `MapboxIncidentMapView`, `SettingsView` | `SettingsView` |
 | `communityAlerts` | Bool | true | `FeedView`, `IncidentMapView`, `MapboxIncidentMapView`, `SettingsView` | `SettingsView` |
 | `useApproximateLocation` | Bool | true | `ReportIncidentView`, `SettingsView` | `SettingsView` |
+| `lastKnownLatitude` | Double | — | `LocationManager.lastKnownCoordinate` (→ `MapDefaults`, map camera init) | `LocationManager` (on each GPS fix) |
+| `lastKnownLongitude` | Double | — | `LocationManager.lastKnownCoordinate` (→ `MapDefaults`, map camera init) | `LocationManager` (on each GPS fix) |
+
+> Key names are centralized in `AppStorageKey.swift`. `watchRadius` is stored
+> canonically in **km**; the Settings label converts to mi for imperial locales.
 
 ---
 
 ## 7. Duplication & Efficiency Notes
 
-### 🔴 High Impact — Duplicated Filter Logic
+### ✅ Resolved — Shared Filter Logic
 
-The `visibleIncidents` computed property (urgentAlerts + communityAlerts + watchRadius + distance) is copy-pasted in **three views**:
-
-- `FeedView.settingsFilteredIncidents` (line ~216)
-- `IncidentMapView.visibleIncidents` (line ~1704)
-- `MapboxIncidentMapView.visibleIncidents` (line ~2673)
-
-**Fix:** Move this filter into `IncidentStore` as a method, e.g.:
-```swift
-func visibleIncidents(
-    urgentAlerts: Bool,
-    communityAlerts: Bool,
-    watchRadius: Double,
-    from coordinate: CLLocationCoordinate2D?
-) -> [Incident]
-```
-All three views call that one method. Changes to filter logic propagate everywhere automatically.
+The urgentAlerts + communityAlerts + watchRadius + distance filter now lives in
+`IncidentStore.nearbyIncidents(urgentAlerts:communityAlerts:watchRadius:near:)`.
+`FeedView`, `IncidentMapView`, and `MapboxIncidentMapView` all call that single
+method, so filter changes propagate everywhere automatically.
 
 ---
 
@@ -327,11 +354,29 @@ Three nearly identical `.background + .overlay(stroke)` modifiers exist as priva
 
 ---
 
-### 🟢 Low — `Incident.seedIncidents` in IncidentStore
+### ✅ Resolved — `Incident.seedIncidents` no longer ships
 
-Seed data lives in `IncidentStore.swift` as an extension on `Incident`. At ~90 lines, it's not a problem now but will become hard to find once the store grows.
+Seed data was previously the production store's initial state (5 fake incidents
+shown to every user on launch). It is now wrapped in `#if DEBUG` and used only by
+SwiftUI previews via `IncidentStore.preview`. The production store starts **empty**
+and fills from the geo-bounded remote listener. `#Preview` blocks that reference it
+are themselves `#if DEBUG` (since `#Preview` macros compile into release builds).
 
-**Consider:** Moving seed data to its own file `Incident+SeedData.swift` or behind a `#if DEBUG` guard.
+---
+
+### ✅ Resolved — Other audited items
+
+- **No fabricated location.** `addIncident` and the remote decoder store `nil`
+  rather than a default-city pin when no location is shared; pins/distance/directions
+  gate on `coordinate`/`hasLocation`.
+- **No silent network failures.** `submitIncident`/`recordSignal` retry with backoff
+  and surface `IncidentStore.lastSyncError`; SOS `markNotified` failures surface via
+  `trustedContactError` (previously `try?`-swallowed).
+- **Magic coordinate de-duplicated** into `CLLocationCoordinate2D.pulseDefaultCenter`
+  (now only a deep fallback; map cameras use `MapDefaults`).
+- **Force-unwrapped Google Maps URLs** replaced with `URLComponents`.
+- **`GoogleService-Info.plist` untracked** from git (`.gitignore` + committed
+  `.example` template); protect the API key via Cloud Console restrictions + rules.
 
 ---
 
@@ -355,7 +400,7 @@ Seed data lives in `IncidentStore.swift` as an extension on `Incident`. At ~90 l
 
 ## 8. SOS Backend & Privacy Contract
 
-SOS support is intentionally split from incident reporting. Trusted contacts are stored locally through `SOSTrustedContactStore`, and remote SOS calls are only available through `SOSRemoteStore.makeIfConfigured()` when `GoogleService-Info.plist` is present.
+SOS support is intentionally split from incident reporting. Trusted contacts are stored locally through `SOSTrustedContactStore`, and remote SOS calls are only available through `SOSRemoteStore.makeIfConfigured()` when `GoogleService-Info.plist` is present. That plist is **git-ignored** (each developer supplies their own; see `GoogleService-Info.plist.example` and `FIREBASE_SETUP.md`).
 
 ### Client payloads
 
@@ -391,8 +436,9 @@ Law-enforcement and admin access must be audited, time-limited, and restricted t
 
 The Firebase backend now lives in this repo:
 
-- `firebase.json` configures Firestore rules/indexes and local emulators for Auth, Functions, and Firestore.
-- `firestore.rules` denies direct client access to raw SOS location/session/notification/idempotency/rate-limit collections.
+- `firebase.json` configures Firestore rules/indexes, Storage rules, and local emulators for Auth, Functions, and Firestore.
+- `firestore.rules` denies direct client access to raw SOS location/session/notification/idempotency/rate-limit collections. `safety_incidents_public` is client-readable but client-unwritable (writes go through `submit_incident`, which also stamps the `geohash`).
+- `storage.rules` scopes incident evidence to `incident_reports/{uid}/…`: the owner may create image/audio ≤10 MB; everything else denied.
 - `functions/src/index.js` implements callable SOS endpoints:
   - `activate_sos`: auth/App Check, idempotency, rate limits, server-side trail caps, private session write, audit write, notification queue + delivery attempt.
   - `append_sos_location`: auth/App Check, owner check, active/unexpired session check, idempotent sequence updates, append-only update records.
@@ -408,7 +454,71 @@ Production still needs provider secrets, sender verification, delivery-receipt m
 The local Firebase CLI can see the `pulsetracker-0000` Firebase project, and `.firebaserc` maps `default`/`production` to that project. The live project currently has existing Python functions, so this repo uses the separate Functions codebase `pulsetrackr-sos` for SOS to avoid deleting or reconciling unrelated deployed functions. A deploy still requires intentional operator action:
 
 ```sh
-firebase deploy --only functions,firestore:rules,firestore:indexes
+firebase deploy --only functions,firestore:rules,firestore:indexes,storage
 ```
 
 Before deploy, configure secrets with `firebase functions:secrets:set` for Twilio and SendGrid, then assign custom responder claims through `functions/scripts/setSosRoleClaim.js`.
+
+---
+
+## 9. Geo-scaling, Units & Localization
+
+Groundwork for a public, multi-region release.
+
+### Geo-bounded incident feed (geohash)
+
+The app does **not** stream every incident worldwide. Each public incident carries a
+standard geohash, and the client queries only the cells around the user.
+
+- **Write side** — `submit_incident` stores `geohash` (precision 9) on each
+  `safety_incidents_public` doc via `functions/src/geohash.js`. Byte-for-byte
+  compatible with the client encoder in `app/Geohash.swift`.
+- **Read side** — `Geohash.coveringPrefixes(lat, lon, radiusMeters)` picks a
+  precision sized to the watch radius and returns the centre cell + its 8 neighbours.
+  `SafetyIncidentRemoteStore.observeIncidents(near:radiusMeters:)` attaches one
+  listener per prefix as a `geohash` range query `[prefix, prefix+"~")`, merges the
+  buckets, then filters to the exact radius + active statuses on the client.
+- **Re-subscription** — driven by `ContentView`; re-subscribes when the user moves
+  >500 m or changes `watchRadius`.
+- **Index** — orders by the single `geohash` field (auto-indexed). No composite
+  index needed.
+- **Backfill** — docs written before this change lack `geohash` and are skipped by
+  geo-queries; backfill with `encodeGeohash(lat, lng)` if pre-existing public data.
+
+**Data-visibility consequence:** users only see incidents within their watch radius
+(default 3 km, max 15 km) of their *own* location. No cross-country data; users in
+different cities see different alerts; two users share an alert only where their
+radii overlap.
+
+### Locale-aware units
+
+`CLLocationCoordinate2D.formattedDistance`/`shortFormattedDistance` branch on
+`Locale.current.measurementSystem` → m/km for metric, ft/mi for imperial. The
+Settings watch-radius label converts km→mi for imperial locales (stored value stays
+km).
+
+### Localization
+
+`app/Localizable.xcstrings` (String Catalog) is the translation source.
+`SWIFT_EMIT_LOC_STRINGS = YES` auto-extracts literal `Text("…")` strings. English is
+the development language; `es` is wired end-to-end as a worked example (a build
+emits `es.lproj/Localizable.strings`). String *variables* must be typed
+`LocalizedStringKey` to localize (see `LocationPromptCard`). Full migration is
+incremental — see `LOCALIZATION.md`.
+
+### Initial map camera
+
+All four maps share `MapDefaults`:
+- Returning user (saved last-known location) → opens on that area at city zoom.
+- Brand-new user (no saved location) → opens on a flat zoomed-out **world view**
+  (not an arbitrary city), then animates to the user on first GPS fix.
+- No location + permission undetermined/denied → `LocationPromptCard` overlay.
+
+### Validation
+
+- `pulsetrackrTests/GeohashTests.swift` — encoder round-trip, neighbour reciprocity,
+  and full circle-coverage (no edge misses).
+- `functions/test/geohash.test.js` — server encoder agrees with the client.
+- `functions/test/geoQuery.emulator.js` (`npm run test:geo`) — end-to-end against the
+  **Firestore emulator**: nearby active incidents returned, far/other-continent and
+  resolved excluded, widening the radius pulls in the edge incident.

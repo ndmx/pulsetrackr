@@ -10,12 +10,19 @@ struct IncidentMapView: View {
     @AppStorage(AppStorageKey.communityAlerts) private var communityAlerts = true
     @State private var hasCenteredOnUser = false
     @State private var selectedIncident: Incident?
-    @State private var cameraPosition: MapCameraPosition = .region(
-        MKCoordinateRegion(
-            center: CLLocationCoordinate2D(latitude: 6.5244, longitude: 3.3792),
-            span: MKCoordinateSpan(latitudeDelta: 0.055, longitudeDelta: 0.055)
-        )
+    @State private var cameraPosition: MapCameraPosition = MapDefaults.initialRegion(
+        citySpan: MKCoordinateSpan(latitudeDelta: 0.055, longitudeDelta: 0.055)
     )
+
+    /// Show the prompt only when there's nothing to center on and location won't
+    /// arrive without user action (undetermined/denied). If authorized, a fix is
+    /// already on the way, so we stay quiet.
+    private var needsLocationPrompt: Bool {
+        locationManager.currentCoordinate == nil
+            && LocationManager.lastKnownCoordinate == nil
+            && locationManager.authorizationStatus != .authorizedWhenInUse
+            && locationManager.authorizationStatus != .authorizedAlways
+    }
 
     private var visibleIncidents: [Incident] {
         incidentStore.nearbyIncidents(
@@ -52,16 +59,18 @@ struct IncidentMapView: View {
                 }
 
                 ForEach(visibleIncidents) { incident in
-                    Annotation(incident.title, coordinate: incident.coordinate) {
-                        NavigationLink {
-                            IncidentDetailView(incident: incident)
-                        } label: {
-                            LiveIncidentPin(incident: incident)
+                    if let coordinate = incident.coordinate {
+                        Annotation(incident.title, coordinate: coordinate) {
+                            NavigationLink {
+                                IncidentDetailView(incident: incident)
+                            } label: {
+                                LiveIncidentPin(incident: incident)
+                            }
+                            .buttonStyle(.plain)
+                            .simultaneousGesture(TapGesture().onEnded {
+                                selectedIncident = incident
+                            })
                         }
-                        .buttonStyle(.plain)
-                        .simultaneousGesture(TapGesture().onEnded {
-                            selectedIncident = incident
-                        })
                     }
                 }
             }
@@ -79,6 +88,15 @@ struct IncidentMapView: View {
             mapSummary
             SOSOverlayView()
         }
+        .overlay(alignment: .top) {
+            if needsLocationPrompt {
+                LocationPromptCard(
+                    status: locationManager.authorizationStatus,
+                    onRequestPermission: { locationManager.requestCurrentLocation() }
+                )
+                .padding()
+            }
+        }
         .navigationTitle("Live Map")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
@@ -87,12 +105,14 @@ struct IncidentMapView: View {
         .onReceive(locationManager.$currentCoordinate) { coordinate in
             guard let coordinate, !hasCenteredOnUser else { return }
             hasCenteredOnUser = true
-            cameraPosition = .region(
-                MKCoordinateRegion(
-                    center: coordinate,
-                    span: MKCoordinateSpan(latitudeDelta: 0.05, longitudeDelta: 0.05)
+            withAnimation(.easeInOut(duration: 0.6)) {
+                cameraPosition = .region(
+                    MKCoordinateRegion(
+                        center: coordinate,
+                        span: MKCoordinateSpan(latitudeDelta: 0.05, longitudeDelta: 0.05)
+                    )
                 )
-            )
+            }
         }
     }
 
@@ -163,11 +183,14 @@ struct IncidentMapView: View {
     }
 
     private var nearestDistanceText: String {
-        guard let userCoord = locationManager.currentCoordinate,
-              let nearest = visibleIncidents.min(by: {
-                  $0.coordinate.distance(to: userCoord) < $1.coordinate.distance(to: userCoord)
-              }) else { return "—" }
-        return userCoord.shortFormattedDistance(to: nearest.coordinate)
+        guard let userCoord = locationManager.currentCoordinate else { return "—" }
+        let located = visibleIncidents.compactMap { incident in
+            incident.coordinate.map { (incident, $0) }
+        }
+        guard let nearest = located.min(by: {
+            $0.1.distance(to: userCoord) < $1.1.distance(to: userCoord)
+        }) else { return "—" }
+        return userCoord.shortFormattedDistance(to: nearest.1)
     }
 
     private var locationTitle: String {
@@ -305,11 +328,13 @@ private struct FeaturedIncidentCard: View {
     }
 }
 
+#if DEBUG
 #Preview {
     NavigationStack {
         IncidentMapView()
-            .environmentObject(IncidentStore())
+            .environmentObject(IncidentStore.preview)
             .environmentObject(LocationManager())
             .environmentObject(SOSStore())
     }
 }
+#endif

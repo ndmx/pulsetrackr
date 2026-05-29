@@ -1,6 +1,12 @@
 .DS_Store
 .mapbox
 Config/Local.xcconfig
+
+# Firebase iOS config — contains the project's API key. Not a true secret
+# (it ships in the app binary), but kept out of version control as hygiene and
+# to satisfy secret scanners. Each developer drops their own copy in app/;
+# see GoogleService-Info.plist.example and FIREBASE_SETUP.md.
+app/GoogleService-Info.plist
 DerivedData/
 build/
 xcuserdata/

@@ -7,6 +7,14 @@ struct SettingsView: View {
     @AppStorage(AppStorageKey.communityAlerts) private var communityAlerts = true
     @AppStorage(AppStorageKey.useApproximateLocation) private var useApproximateLocation = true
 
+    // watchRadius is stored canonically in km; display it in the user's locale unit.
+    private var radiusLabel: String {
+        if Locale.current.measurementSystem != .metric {
+            return String(format: "%.1f mi", watchRadius / 1.609_344)
+        }
+        return String(format: "%.1f km", watchRadius)
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
@@ -36,7 +44,7 @@ struct SettingsView: View {
                         .font(.subheadline)
                         .foregroundStyle(.white.opacity(0.72))
                     Spacer()
-                    Text("\(watchRadius, specifier: "%.1f") km")
+                    Text(radiusLabel)
                         .font(.subheadline)
                         .fontWeight(.bold)
                         .foregroundStyle(.white)

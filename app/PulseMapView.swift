@@ -10,11 +10,13 @@ struct PulseMapView: View {
     }
 }
 
+#if DEBUG
 #Preview {
     NavigationStack {
         PulseMapView()
-            .environmentObject(IncidentStore())
+            .environmentObject(IncidentStore.preview)
             .environmentObject(LocationManager())
             .environmentObject(SOSStore())
     }
 }
+#endif

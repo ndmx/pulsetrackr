@@ -8,11 +8,12 @@
 
 /* Begin PBXBuildFile section */
 		7738F9B22FA9154F004E75B1 /* MapboxMaps in Frameworks */ = {isa = PBXBuildFile; productRef = 7738F9B12FA9154F004E75B1 /* MapboxMaps */; };
-		8F1A0B862F0A111100ABCDEF /* FirebaseAppCheck in Frameworks */ = {isa = PBXBuildFile; productRef = 8F1A0B872F0A111100ABCDEF /* FirebaseAppCheck */; };
 		8F1A0B812F0A111100ABCDEF /* FirebaseAuth in Frameworks */ = {isa = PBXBuildFile; productRef = 8F1A0B7E2F0A111100ABCDEF /* FirebaseAuth */; };
 		8F1A0B832F0A111100ABCDEF /* FirebaseCore in Frameworks */ = {isa = PBXBuildFile; productRef = 8F1A0B7F2F0A111100ABCDEF /* FirebaseCore */; };
 		8F1A0B842F0A111100ABCDEF /* FirebaseFirestore in Frameworks */ = {isa = PBXBuildFile; productRef = 8F1A0B802F0A111100ABCDEF /* FirebaseFirestore */; };
 		8F1A0B852F0A111100ABCDEF /* FirebaseFunctions in Frameworks */ = {isa = PBXBuildFile; productRef = 8F1A0B822F0A111100ABCDEF /* FirebaseFunctions */; };
+		8F1A0B862F0A111100ABCDEF /* FirebaseAppCheck in Frameworks */ = {isa = PBXBuildFile; productRef = 8F1A0B872F0A111100ABCDEF /* FirebaseAppCheck */; };
+		8F1A0B902F0A111100ABCDEF /* FirebaseStorage in Frameworks */ = {isa = PBXBuildFile; productRef = 8F1A0B912F0A111100ABCDEF /* FirebaseStorage */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -38,9 +39,22 @@
 		772676082E4EC6A900FEFAD5 /* pulsetrackrUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = pulsetrackrUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		8F1A0B922F0A111100ABCDEF /* Exceptions for "app" folder in "pulsetrackr" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				GoogleService-Info.plist.example,
+			);
+			target = 772675F02E4EC6A700FEFAD5 /* pulsetrackr */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		772675F32E4EC6A700FEFAD5 /* app */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				8F1A0B922F0A111100ABCDEF /* Exceptions for "app" folder in "pulsetrackr" target */,
+			);
 			path = app;
 			sourceTree = "<group>";
 		};
@@ -67,6 +81,7 @@
 				8F1A0B832F0A111100ABCDEF /* FirebaseCore in Frameworks */,
 				8F1A0B842F0A111100ABCDEF /* FirebaseFirestore in Frameworks */,
 				8F1A0B852F0A111100ABCDEF /* FirebaseFunctions in Frameworks */,
+				8F1A0B902F0A111100ABCDEF /* FirebaseStorage in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -134,6 +149,7 @@
 				8F1A0B7F2F0A111100ABCDEF /* FirebaseCore */,
 				8F1A0B802F0A111100ABCDEF /* FirebaseFirestore */,
 				8F1A0B822F0A111100ABCDEF /* FirebaseFunctions */,
+				8F1A0B912F0A111100ABCDEF /* FirebaseStorage */,
 			);
 			productName = pulsetrackr;
 			productReference = 772675F12E4EC6A700FEFAD5 /* pulsetrackr.app */;
@@ -214,6 +230,7 @@
 			knownRegions = (
 				en,
 				Base,
+				es,
 			);
 			mainGroup = 772675E82E4EC6A700FEFAD5;
 			minimizedProjectReferenceProxies = 1;
@@ -268,15 +285,19 @@
 			);
 			inputPaths = (
 				"$(HOME)/.mapbox",
+				"$(SRCROOT)/scripts/inject_mapbox_token.sh",
+				"$(TARGET_BUILD_DIR)/$(INFOPLIST_PATH)",
 			);
 			name = "Inject Mapbox Token";
 			outputFileListPaths = (
 			);
 			outputPaths = (
+				"$(TARGET_BUILD_DIR)/$(INFOPLIST_PATH)",
+				"$(DERIVED_FILE_DIR)/inject-mapbox-token.stamp",
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "set -e\nTOKEN_FILE=\"$HOME/.mapbox\"\nINFO_PLIST=\"$TARGET_BUILD_DIR/$INFOPLIST_PATH\"\n\nif [ ! -f \"$TOKEN_FILE\" ]; then\n  echo \"warning: Mapbox runtime token not found at ~/.mapbox. Add your public token there before running the Mapbox map.\"\n  exit 0\nfi\n\ntoken=\"$(tr -d '\\n\\r ' < \"$TOKEN_FILE\")\"\n\nif [ -z \"$token\" ]; then\n  echo \"warning: ~/.mapbox exists but is empty. Add your public Mapbox token before running the Mapbox map.\"\n  exit 0\nfi\n\n/usr/libexec/PlistBuddy -c \"Set :MBXAccessToken $token\" \"$INFO_PLIST\" 2>/dev/null || \\\n/usr/libexec/PlistBuddy -c \"Add :MBXAccessToken string $token\" \"$INFO_PLIST\"\n";
+			shellScript = "sh \"$SRCROOT/scripts/inject_mapbox_token.sh\"\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
@@ -371,7 +392,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 18.5;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
@@ -429,7 +450,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 18.5;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
@@ -446,11 +467,12 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = app/pulsetrackr.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 4;
 				DEVELOPMENT_TEAM = 4ZSXLWH9W2;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "PulseTrackr uses location to show nearby reports and, when you activate SOS, share exact location updates with your trusted contacts.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "PulseTrackr uses the microphone when you choose to record a voice note for an incident report.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -476,11 +498,12 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = app/pulsetrackr.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 4;
 				DEVELOPMENT_TEAM = 4ZSXLWH9W2;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "PulseTrackr uses location to show nearby reports and, when you activate SOS, share exact location updates with your trusted contacts.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "PulseTrackr uses the microphone when you choose to record a voice note for an incident report.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -504,10 +527,10 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 4;
 				DEVELOPMENT_TEAM = 4ZSXLWH9W2;
 				GENERATE_INFOPLIST_FILE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 18.5;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = org.pulsetracker.pulsetrackr.pulsetrackrTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -523,10 +546,10 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 4;
 				DEVELOPMENT_TEAM = 4ZSXLWH9W2;
 				GENERATE_INFOPLIST_FILE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 18.5;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = org.pulsetracker.pulsetrackr.pulsetrackrTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -541,7 +564,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 4;
 				DEVELOPMENT_TEAM = 4ZSXLWH9W2;
 				GENERATE_INFOPLIST_FILE = YES;
 				MARKETING_VERSION = 1.0;
@@ -558,7 +581,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 4;
 				DEVELOPMENT_TEAM = 4ZSXLWH9W2;
 				GENERATE_INFOPLIST_FILE = YES;
 				MARKETING_VERSION = 1.0;
@@ -637,11 +660,6 @@
 			package = 7738F9B02FA9154F004E75B1 /* XCRemoteSwiftPackageReference "mapbox-maps-ios" */;
 			productName = MapboxMaps;
 		};
-		8F1A0B872F0A111100ABCDEF /* FirebaseAppCheck */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 8F1A0B7D2F0A111100ABCDEF /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
-			productName = FirebaseAppCheck;
-		};
 		8F1A0B7E2F0A111100ABCDEF /* FirebaseAuth */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 8F1A0B7D2F0A111100ABCDEF /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
@@ -661,6 +679,16 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 8F1A0B7D2F0A111100ABCDEF /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
 			productName = FirebaseFunctions;
+		};
+		8F1A0B872F0A111100ABCDEF /* FirebaseAppCheck */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 8F1A0B7D2F0A111100ABCDEF /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseAppCheck;
+		};
+		8F1A0B912F0A111100ABCDEF /* FirebaseStorage */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 8F1A0B7D2F0A111100ABCDEF /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseStorage;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

@@ -2,7 +2,7 @@ import Foundation
 import MapKit
 import SwiftUI
 
-private extension CLLocationCoordinate2D {
+extension CLLocationCoordinate2D {
     var isValid: Bool { CLLocationCoordinate2DIsValid(self) }
 }
 
@@ -368,7 +368,9 @@ struct Incident: Identifiable, Equatable {
     var severity: IncidentSeverity
     var status: IncidentStatus
     var reporterCoordinate: CLLocationCoordinate2D?
-    var coordinate: CLLocationCoordinate2D
+    /// Public (fuzzed) map location. `nil` when the reporter shared no location —
+    /// such incidents are not pinned on the map and show no directions.
+    var coordinate: CLLocationCoordinate2D?
     var neighborhood: String
     var reportedAt: Date
     var confirmations: Int
@@ -427,18 +429,43 @@ struct Incident: Identifiable, Equatable {
         return parts.joined(separator: " • ")
     }
 
-    private static let lagosDefault = CLLocationCoordinate2D(latitude: 6.5244, longitude: 3.3792)
+    /// True when the incident has a usable public location to pin/route to.
+    var hasLocation: Bool { coordinate?.isValid == true }
+
+    /// The coordinate to route a Maps link to, falling back to the default center
+    /// when no valid location is shared. Views should gate on `hasLocation` first.
+    private var mapLinkCoordinate: CLLocationCoordinate2D {
+        if let coordinate, coordinate.isValid { return coordinate }
+        return .pulseDefaultCenter
+    }
+
+    // Validated once at load; a static literal that is guaranteed to parse.
+    private static let googleMapsHomeURL = URL(string: "https://www.google.com/maps")!
 
     var googleMapsAreaURL: URL {
-        let coord = coordinate.isValid ? coordinate : Self.lagosDefault
-        return URL(string: "https://www.google.com/maps/search/?api=1&query=\(coord.latitude),\(coord.longitude)")
-            ?? URL(string: "https://www.google.com/maps")!
+        let coord = mapLinkCoordinate
+        return Self.googleMapsURL(path: "/maps/search/", queryItems: [
+            URLQueryItem(name: "api", value: "1"),
+            URLQueryItem(name: "query", value: "\(coord.latitude),\(coord.longitude)")
+        ])
     }
 
     var googleMapsDirectionsURL: URL {
-        let coord = coordinate.isValid ? coordinate : Self.lagosDefault
-        return URL(string: "https://www.google.com/maps/dir/?api=1&destination=\(coord.latitude),\(coord.longitude)&travelmode=driving")
-            ?? URL(string: "https://www.google.com/maps")!
+        let coord = mapLinkCoordinate
+        return Self.googleMapsURL(path: "/maps/dir/", queryItems: [
+            URLQueryItem(name: "api", value: "1"),
+            URLQueryItem(name: "destination", value: "\(coord.latitude),\(coord.longitude)"),
+            URLQueryItem(name: "travelmode", value: "driving")
+        ])
+    }
+
+    private static func googleMapsURL(path: String, queryItems: [URLQueryItem]) -> URL {
+        var components = URLComponents()
+        components.scheme = "https"
+        components.host = "www.google.com"
+        components.path = path
+        components.queryItems = queryItems
+        return components.url ?? googleMapsHomeURL
     }
 }
 
@@ -449,24 +476,45 @@ struct IncidentUpdate: Identifiable {
 }
 
 extension CLLocationCoordinate2D {
+    /// Default map center and fallback used when a precise location is unavailable (Lagos, Nigeria).
+    static let pulseDefaultCenter = CLLocationCoordinate2D(latitude: 6.5244, longitude: 3.3792)
+
     func distance(to other: CLLocationCoordinate2D) -> CLLocationDistance {
         CLLocation(latitude: latitude, longitude: longitude)
             .distance(from: CLLocation(latitude: other.latitude, longitude: other.longitude))
     }
 
+    /// True when the user's locale prefers imperial distances (US, UK, Liberia, Myanmar).
+    private static var usesImperialDistance: Bool {
+        Locale.current.measurementSystem != .metric
+    }
+
     func formattedDistance(to other: CLLocationCoordinate2D) -> String {
         let m = distance(to: other)
-        if m < 100 { return "< 100m away" }
-        if m < 1_000 { return "\(Int((m / 50).rounded() * 50))m away" }
-        let km = m / 1_000
-        return km < 10 ? String(format: "%.1f km away", km) : "\(Int(km.rounded())) km away"
+        guard Self.usesImperialDistance else {
+            if m < 100 { return "< 100 m away" }
+            if m < 1_000 { return "\(Int((m / 50).rounded() * 50)) m away" }
+            let km = m / 1_000
+            return km < 10 ? String(format: "%.1f km away", km) : "\(Int(km.rounded())) km away"
+        }
+        let feet = m * 3.280_84
+        let miles = m / 1_609.344
+        if feet < 300 { return "< 300 ft away" }
+        if miles < 0.1 { return "\(Int((feet / 50).rounded() * 50)) ft away" }
+        return miles < 10 ? String(format: "%.1f mi away", miles) : "\(Int(miles.rounded())) mi away"
     }
 
     func shortFormattedDistance(to other: CLLocationCoordinate2D) -> String {
         let m = distance(to: other)
-        if m < 1_000 { return "\(Int(m.rounded()))m" }
-        let km = m / 1_000
-        return km < 10 ? String(format: "%.1fkm", km) : "\(Int(km.rounded()))km"
+        guard Self.usesImperialDistance else {
+            if m < 1_000 { return "\(Int(m.rounded()))m" }
+            let km = m / 1_000
+            return km < 10 ? String(format: "%.1fkm", km) : "\(Int(km.rounded()))km"
+        }
+        let feet = m * 3.280_84
+        let miles = m / 1_609.344
+        if miles < 0.1 { return "\(Int(feet.rounded()))ft" }
+        return miles < 10 ? String(format: "%.1fmi", miles) : "\(Int(miles.rounded()))mi"
     }
 }
 

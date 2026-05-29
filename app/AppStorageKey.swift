@@ -6,4 +6,6 @@ enum AppStorageKey {
     static let urgentAlerts          = "urgentAlerts"
     static let communityAlerts       = "communityAlerts"
     static let useApproximateLocation = "useApproximateLocation"
+    static let lastKnownLatitude      = "lastKnownLatitude"
+    static let lastKnownLongitude     = "lastKnownLongitude"
 }

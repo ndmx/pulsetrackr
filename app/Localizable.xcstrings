@@ -1,0 +1,61 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "Enable location" : {
+      "comment" : "Button: requests location permission when undetermined.",
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Activar ubicación"
+          }
+        }
+      }
+    },
+    "Location access is off, so the map can't show what's happening around you. Turn it on in Settings." : {
+      "comment" : "Shown when location permission is denied.",
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "El acceso a la ubicación está desactivado, así que el mapa no puede mostrar lo que ocurre a tu alrededor. Actívalo en Ajustes."
+          }
+        }
+      }
+    },
+    "Open Settings" : {
+      "comment" : "Button: opens the system Settings app when location is denied.",
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Abrir Ajustes"
+          }
+        }
+      }
+    },
+    "See incidents near you" : {
+      "comment" : "Title of the location prompt card on the map.",
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ver incidentes cerca de ti"
+          }
+        }
+      }
+    },
+    "Turn on location to see live incidents and alerts in your area." : {
+      "comment" : "Shown when location permission has not yet been requested.",
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Activa la ubicación para ver incidentes y alertas en tu zona en tiempo real."
+          }
+        }
+      }
+    }
+  },
+  "version" : "1.0"
+}

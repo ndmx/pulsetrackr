@@ -155,7 +155,7 @@ struct LaunchView: View {
                 icon: "bell.and.waves.left.and.right.fill",
                 color: .red,
                 title: "Report what you see",
-                description: "Snap a photo, record audio, or type — takes under 20 seconds"
+                description: "Attach a photo, record audio, mark it live, or type — takes under 20 seconds"
             )
             FeatureRow(
                 icon: "location.circle.fill",

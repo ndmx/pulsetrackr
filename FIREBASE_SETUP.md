@@ -7,9 +7,10 @@ PulseTrackr can use the existing PulseTrack Firebase project while keeping safet
 The workspace is connected to Firebase project `pulsetracker-0000`.
 
 - The iOS app `pulsetrackr` is registered with bundle id `org.pulsetracker.pulsetrackr.pulsetrackr`.
-- `app/GoogleService-Info.plist` has been downloaded for that iOS app and is bundled by the Xcode target.
+- `app/GoogleService-Info.plist` is **git-ignored** and supplied locally by each developer (see [Local config](#local-config-googleservice-infoplist)). The Xcode target still bundles it from disk at build time. A committed `app/GoogleService-Info.plist.example` documents the expected structure.
 - Firebase Authentication is initialized and Anonymous sign-in is enabled.
 - The default Firestore database exists.
+- Firebase Storage is configured in code for incident photo/audio evidence, but the project bucket must be initialized in the Firebase Console before Storage rules can deploy.
 - `.firebaserc` maps `default` and `production` to `pulsetracker-0000`.
 - SOS Functions use the separate Firebase Functions codebase `pulsetrackr-sos` so deploying this repo does not reconcile/delete the project’s existing Python functions.
 
@@ -26,6 +27,27 @@ These steps are already complete for `pulsetracker-0000`:
 2. `GoogleService-Info.plist` downloaded into `app/`.
 3. Anonymous Auth enabled.
 
+### Local config (`GoogleService-Info.plist`)
+
+The live plist is git-ignored, so a fresh checkout needs it added before the app
+will build:
+
+1. Firebase Console → **Project settings** → **Your apps** → the iOS app
+   (`org.pulsetracker.pulsetrackr.pulsetrackr`) → download `GoogleService-Info.plist`.
+2. Save it as `app/GoogleService-Info.plist` (drop the `.example` suffix).
+
+The `API_KEY` inside this file is **not a true secret** — it ships inside every
+copy of the app binary and is extractable. Hiding it from git only quiets secret
+scanners; it provides no runtime protection. The real controls are:
+
+- **Restrict the API key** in Google Cloud Console → *APIs & Services* →
+  *Credentials* → set *Application restrictions* to this iOS bundle id and
+  *API restrictions* to only the Firebase APIs the app uses.
+- **Lock down Security Rules** (Firestore + Storage) — see below.
+
+Because the key is non-sensitive, the historical commit that contained it does
+not require a git-history rewrite or key rotation. Just keep the key restricted.
+
 Install and deploy the backend from this repo, or merge these files into the shared PulseTrack Firebase project:
 
 ```sh
@@ -34,10 +56,71 @@ npm install
 npm test
 npm run lint
 cd ..
-firebase deploy --only functions,firestore:rules,firestore:indexes
+firebase deploy --only functions,firestore:rules,firestore:indexes,storage
 ```
 
-Without `GoogleService-Info.plist`, the iOS app keeps using local seed incidents and should not attempt SOS remote calls. Once the plist is present, it reads from `safety_incidents_public`, submits through the callable `submit_incident` Cloud Function, and can opt into the SOS callable contract below.
+Without `GoogleService-Info.plist`, the iOS app starts with an empty incident list and should not attempt SOS remote calls. (Sample incidents exist only in `#if DEBUG` builds for SwiftUI previews — they are never shown in release builds.) Once the plist is present, it reads from `safety_incidents_public`, submits through the callable `submit_incident` Cloud Function, and can opt into the SOS callable contract below.
+
+## Firebase Storage setup
+
+Incident photo and voice evidence uploads use Firebase Storage paths under:
+
+```text
+incident_reports/{uid}/{client_ref}/{file}
+```
+
+Before deploying Storage rules for the first time:
+
+1. Open Firebase Console for `pulsetracker-0000`.
+2. Go to **Storage**.
+3. Click **Get Started** and create the default bucket.
+4. Deploy rules:
+
+   ```sh
+   firebase deploy --only storage --project pulsetracker-0000
+   ```
+
+Rules allow authenticated users to create image/audio files only under their own UID path, capped at 10 MB. Reads are limited to the same authenticated owner. The callable `submit_incident` validates that evidence metadata points back to the signed-in reporter’s Storage path before writing private/public incident records.
+
+## Geo-bounded incident feed
+
+To scale across all App Store regions, the app does **not** stream every public
+incident worldwide. Instead:
+
+- **Write side** — `submit_incident` stores a standard geohash on each
+  `safety_incidents_public` doc via [`functions/src/geohash.js`](functions/src/geohash.js)
+  (`geohash` field, precision 9). This is byte-for-byte compatible with the client
+  encoder in `app/Geohash.swift`.
+- **Read side** — the client (`SafetyIncidentRemoteStore.observeIncidents(near:radiusMeters:)`)
+  picks a geohash precision sized to the user's watch radius, then attaches one
+  listener per covering cell (the cell containing the user plus its 8 neighbours)
+  as `geohash` prefix-range queries. Results are merged, filtered to the exact
+  radius + active statuses, and de-duplicated on the client. It re-subscribes when
+  the user moves >500 m or changes their watch radius.
+- **Index** — the query orders by the single `geohash` field, which Firestore
+  indexes automatically. No composite index is required, so `firestore.indexes.json`
+  needs no change for this feature.
+- **Backfill** — incidents written *before* this change have no `geohash` field and
+  will be skipped by geo-queries. Pre-launch this is typically a non-issue (the app
+  ships with no real public incidents). If you have existing public docs, run a
+  one-off backfill that reads each doc's `latitude`/`longitude` and sets
+  `geohash = encodeGeohash(lat, lng)` using the same module.
+
+The geohash encoder/neighbour logic is unit-tested on both sides
+(`pulsetrackrTests/GeohashTests.swift`, `functions/test/geohash.test.js`). The
+**end-to-end query path** (geohash-on-write + prefix-range queries returning nearby
+incidents and excluding far ones) is validated against the Firestore emulator:
+
+```sh
+cd functions
+npm run test:geo
+```
+
+This wraps `functions/test/geoQuery.emulator.js` in `firebase emulators:exec`,
+seeds incidents at known distances (Lagos centre, ~11 km edge, New York), and
+asserts the 3 km query returns only the nearby active incidents, the 15 km query
+pulls in the edge incident, and another continent / resolved incidents are always
+excluded. Requires the Firebase CLI and a JRE (for the Firestore emulator).
 
 ## Production notification secrets
 

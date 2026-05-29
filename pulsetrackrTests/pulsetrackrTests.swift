@@ -579,9 +579,11 @@ struct IncidentStoreTests {
 
     // MARK: Seed Data
 
-    @Test @MainActor func storeInitializesWithSeedIncidents() {
+    @Test @MainActor func storeInitializesEmpty() {
+        // Production store starts empty; real incidents arrive from the remote store.
+        // (Sample data is DEBUG-only, via IncidentStore.preview.)
         let store = IncidentStore()
-        #expect(!store.incidents.isEmpty)
+        #expect(store.incidents.isEmpty)
     }
 
     @Test @MainActor func activeIncidentsExcludesResolved() {
@@ -628,7 +630,7 @@ struct IncidentStoreTests {
         #expect(store.incidents.last?.status == .active)
     }
 
-    @Test @MainActor func addIncidentUsesDefaultCoordinateWhenNil() {
+    @Test @MainActor func addIncidentLeavesCoordinateNilWhenNoLocation() {
         let store = IncidentStore()
         store.addIncident(
             title: "Power gone",
@@ -640,9 +642,8 @@ struct IncidentStoreTests {
             reporterCoordinate: nil
         )
         let added = store.incidents.last!
-        // Default coordinate is Lagos (6.5244, 3.3792) — allow small tolerance
-        #expect(abs(added.coordinate.latitude - 6.5244) < 0.01)
-        #expect(abs(added.coordinate.longitude - 3.3792) < 0.01)
+        // No location shared → coordinate stays nil (no fabricated default pin).
+        #expect(added.coordinate == nil)
     }
 
     @Test @MainActor func addIncidentFallsBackToNearbyAreaWhenNeighborhoodIsEmpty() {
@@ -688,8 +689,9 @@ struct IncidentStoreTests {
             reporterCoordinate: exact
         )
         let added = store.incidents.last!
-        let latDiff = abs(added.coordinate.latitude - exact.latitude)
-        let lonDiff = abs(added.coordinate.longitude - exact.longitude)
+        let pub = added.coordinate!
+        let latDiff = abs(pub.latitude - exact.latitude)
+        let lonDiff = abs(pub.longitude - exact.longitude)
         // Should differ (fuzzing applied), but stay within roughly 300 m
         #expect(latDiff > 0 || lonDiff > 0)
         #expect(latDiff < 0.005)   // ~550 m max latitude

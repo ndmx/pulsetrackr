@@ -68,11 +68,12 @@ struct SimulationTests {
         // ── Phase 1: Ingestion ──────────────────────────────────────────────
         var store: IncidentStore!
         let ingestionTime = clock.measure { store = makeStore(count: scale) }
-        let seedCount = 5
+        // Production store starts empty (seed data is DEBUG-only), so the total
+        // is exactly the number of incidents we ingested.
         let total = store.incidents.count
-        lines.append("  Phase 1 — Ingestion (\(scale) added + \(seedCount) seeds = \(total) total)")
+        lines.append("  Phase 1 — Ingestion (\(scale) added = \(total) total)")
         lines.append("            \(fmt(ingestionTime))")
-        #expect(total == scale + seedCount)
+        #expect(total == scale)
 
         // ── Phase 2: Feed render (filter + sort) ───────────────────────────
         var active: [Incident] = []
