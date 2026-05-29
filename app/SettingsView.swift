@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct SettingsView: View {
+    @EnvironmentObject private var sosStore: SOSStore
     @AppStorage(AppStorageKey.watchRadius) private var watchRadius = 3.0
     @AppStorage(AppStorageKey.urgentAlerts) private var urgentAlerts = true
     @AppStorage(AppStorageKey.communityAlerts) private var communityAlerts = true
@@ -11,6 +12,7 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: 16) {
                 watchAreaSection
                 alertsSection
+                sosSection
                 privacySection
                 statusSection
             }
@@ -91,6 +93,53 @@ struct SettingsView: View {
                 description: "Others see only the general incident area, not where you are",
                 isOn: $useApproximateLocation
             )
+
+            Text("During SOS, exact location is shared with your trusted contacts only after you activate it. PulseTrackr does not automatically contact police, ambulance, or emergency services.")
+                .font(.caption)
+                .foregroundStyle(.white.opacity(0.50))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .cardPanel()
+    }
+
+    private var sosSection: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            SettingsSectionHeader(title: "SOS")
+
+            NavigationLink {
+                SOSTrustedContactsView()
+            } label: {
+                HStack(spacing: 14) {
+                    Image(systemName: "person.2.fill")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(.red)
+                        .frame(width: 36, height: 36)
+                        .background(.red.opacity(0.14), in: RoundedRectangle(cornerRadius: 10))
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Trusted contacts")
+                            .font(.subheadline)
+                            .fontWeight(.semibold)
+                            .foregroundStyle(.white)
+                        Text(sosContactsDescription)
+                            .font(.caption)
+                            .foregroundStyle(.white.opacity(0.48))
+                    }
+
+                    Spacer()
+
+                    Image(systemName: "chevron.right")
+                        .font(.caption)
+                        .fontWeight(.bold)
+                        .foregroundStyle(.white.opacity(0.42))
+                }
+            }
+            .buttonStyle(.plain)
+
+            Divider()
+                .background(.white.opacity(0.07))
+
+            StatusRow(icon: "tray.and.arrow.up.fill", label: sosStore.uploadStatusText, color: sosStatusColor)
         }
         .cardPanel()
     }
@@ -102,14 +151,30 @@ struct SettingsView: View {
             VStack(spacing: 10) {
                 StatusRow(icon: "tray.full.fill", label: "Incident queue running", color: .green)
                 StatusRow(icon: "checkmark.shield.fill", label: "Community verification active", color: .green)
-                StatusRow(icon: "lock.location.fill", label: "Reporter locations protected", color: .green)
+                StatusRow(icon: "location.circle.fill", label: "Reporter locations protected", color: .green)
             }
         }
         .cardPanel()
     }
+
+    private var sosContactsDescription: String {
+        if sosStore.activeTrustedContacts.isEmpty {
+            return "Add people before travel"
+        }
+        return "\(sosStore.activeTrustedContacts.count) ready for trusted-contact alerts"
+    }
+
+    private var sosStatusColor: Color {
+        switch sosStore.deliveryState {
+        case .failed: .orange
+        case .syncing: .yellow
+        case .delivered: .green
+        case .localOnly, .ready: sosStore.activeTrustedContacts.isEmpty ? .orange : .green
+        }
+    }
 }
 
-private struct SettingsSectionHeader: View {
+struct SettingsSectionHeader: View {
     var title: String
 
     var body: some View {
@@ -184,5 +249,6 @@ private struct StatusRow: View {
 #Preview {
     NavigationStack {
         SettingsView()
+            .environmentObject(SOSStore())
     }
 }

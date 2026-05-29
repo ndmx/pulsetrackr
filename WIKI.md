@@ -13,6 +13,7 @@
 5. [Data Flow](#5-data-flow)
 6. [Shared State (AppStorage)](#6-shared-state-appstorage)
 7. [Duplication & Efficiency Notes](#7-duplication--efficiency-notes)
+8. [SOS Backend & Privacy Contract](#8-sos-backend--privacy-contract)
 
 ---
 
@@ -34,13 +35,17 @@ Data Layer
   ├── Incident.swift          → domain model (all enums + struct)
   ├── IncidentStore           → @MainActor ObservableObject, CRUD, seed data
   ├── SafetyIncidentRemoteStore → Firebase Firestore listener + Functions submit
+  ├── SOSRemoteStore          → Firebase Functions SOS activate/update/resolve
+  ├── SOSTrustedContact       → local trusted-contact model + Keychain helper
+  ├── SOSPrivacyPolicy        → client-side SOS sharing limits
   ├── IncidentClassifier      → keyword-based auto-classification
-  └── LocationManager         → CLLocationManager wrapper (3 separate instances)
+  └── LocationManager         → shared CLLocationManager wrapper
 
 External
   ├── Firebase Auth           → anonymous sign-in before submissions
   ├── Firebase Firestore      → safety_incidents_public collection (snapshot listener)
-  ├── Firebase Functions      → submit_incident callable
+  ├── Firebase Functions      → submit_incident + SOS callables
+  ├── Twilio / SendGrid       → optional trusted-contact SOS delivery providers
   └── Mapbox Maps SDK         → conditional compile (#if canImport(MapboxMaps))
 ```
 
@@ -61,11 +66,16 @@ graph TD
     RS -->|Firebase Auth| Auth[Anonymous sign-in]
     RS -->|Firestore| FS[safety_incidents_public]
     RS -->|Functions| FN[submit_incident]
+    SOSRS[SOSRemoteStore] -->|uses| FB
+    SOSRS -->|Firebase Auth| Auth
+    SOSRS -->|Functions| SOSFN[activate_sos / append_sos_location / resolve_sos]
 
+    CV -->|@StateObject owns| LM[LocationManager]
     CV -->|.environmentObject| PMV[PulseMapView]
     CV -->|.environmentObject| FV[FeedView]
     CV -->|.environmentObject| RIV[ReportIncidentView]
     CV -->|.environmentObject| SV[SettingsView]
+    CV -->|.environmentObject| LM
 
     PMV -->|#if Mapbox| MIMV[MapboxIncidentMapView]
     PMV -->|#else| IMV[IncidentMapView]
@@ -75,11 +85,6 @@ graph TD
     MIMV -->|NavigationLink| IDV[IncidentDetailView]
     IMV  -->|NavigationLink| IDV
     FV   -->|NavigationLink| IDV
-
-    MIMV -->|@StateObject owns| LM1[LocationManager ①]
-    IMV  -->|@StateObject owns| LM2[LocationManager ②]
-    FV   -->|@StateObject owns| LM3[LocationManager ③]
-    RIV  -->|@StateObject owns| LM4[LocationManager ④]
 ```
 
 ### Read / Write on IncidentStore
@@ -129,6 +134,14 @@ graph LR
 | `Incident.swift` | Domain model | `Incident`, `IncidentCategory`, `IncidentSubtype`, `IncidentSeverity`, `IncidentStatus`, `IncidentConfidence`, `CommunitySignal`, `IncidentUpdate` + `CLLocationCoordinate2D` extensions | — | — (value types) |
 | `IncidentStore.swift` | State manager + seed data | `IncidentStore` + `Incident.seedIncidents` extension | `SafetyIncidentRemoteStore` (optional) | self: in-place O(1) mutation via `lookup[UUID:Int]` |
 | `SafetyIncidentRemoteStore.swift` | Firebase integration | `SafetyIncidentRemoteStore`, `SafetyIncidentRemoteStoreError` | Firestore `safety_incidents_public` | Firestore via `submit_incident` Function |
+| `SOSRemoteStore.swift` | SOS Firebase Functions API | `SOSRemoteStore`, `SOSActivationPayload`, `SOSLocationUpdatePayload`, `SOSResolutionPayload` | Firebase configured state | Functions `activate_sos`, `append_sos_location`, `resolve_sos` |
+| `SOSTrustedContact.swift` | Local SOS contacts | `SOSTrustedContact`, `SOSTrustedContactStore`, notification target payloads | Keychain generic password item | Keychain generic password item |
+| `SOSPrivacyPolicy.swift` | SOS sharing limits | `SOSPrivacyPolicy`, `SOSPayloadCoding` | — | — |
+| `firebase.json` | Firebase backend config | Functions, Firestore, emulator config | — | deploy/emulator behavior |
+| `firestore.rules` | Firestore access rules | server-only SOS collections | Auth/custom claims | denies raw SOS client reads |
+| `functions/src/index.js` | SOS Cloud Functions | `activate_sos`, `append_sos_location`, `resolve_sos`, `request_sos_session_access` | callable payloads | private SOS collections |
+| `functions/src/sosShared.js` | SOS backend validation helpers | payload sanitizers, idempotency helpers | callable payloads | pure values |
+| `functions/src/notificationProviders.js` | SOS notification adapters | Twilio SMS/voice, SendGrid email | provider secrets | provider delivery APIs |
 | `IncidentClassifier.swift` | Text classification | `IncidentClassifier`, `IncidentClassification` | title + summary strings | — (pure function) |
 | `LocationManager.swift` | Location wrapper | `LocationManager` | `CLLocationManager` | publishes `currentCoordinate`, `authorizationStatus` |
 
@@ -279,11 +292,9 @@ All three views call that one method. Changes to filter logic propagate everywhe
 
 ---
 
-### 🔴 High Impact — Multiple LocationManager Instances
+### ✅ Resolved — Shared LocationManager
 
-Four separate `@StateObject private var locationManager = LocationManager()` instances exist across `MapboxIncidentMapView`, `IncidentMapView`, `FeedView`, and `ReportIncidentView`. Each makes its own `CLLocationManager`, which requests location independently.
-
-**Fix:** Lift `LocationManager` into `ContentView` alongside `IncidentStore`, inject it as an environment object. One manager, one permission prompt, shared coordinate.
+`ContentView` owns one `@StateObject private var locationManager = LocationManager()` and injects it as an environment object. `MapboxIncidentMapView`, `IncidentMapView`, `FeedView`, and `ReportIncidentView` read that shared instance instead of creating separate `CLLocationManager` wrappers.
 
 ---
 
@@ -339,3 +350,65 @@ Seed data lives in `IncidentStore.swift` as an extension on `Incident`. At ~90 l
 - `SafetyIncidentRemoteStore.makeIfConfigured()` gracefully no-ops without Firebase plist — good
 - `IncidentClassifier` is a pure function (no state) — good
 - `FirebaseBootstrap` guards against double-configure — good
+
+---
+
+## 8. SOS Backend & Privacy Contract
+
+SOS support is intentionally split from incident reporting. Trusted contacts are stored locally through `SOSTrustedContactStore`, and remote SOS calls are only available through `SOSRemoteStore.makeIfConfigured()` when `GoogleService-Info.plist` is present.
+
+### Client payloads
+
+`activate_sos` receives:
+
+- `client_session_id`, `activated_at`, and `source`
+- `last_known_location`
+- privacy-capped `recent_trail`
+- optional `direction_of_travel`
+- `trusted_contacts_to_notify` for backend notification attempts
+- `device` metadata where locally available, including battery, low-power mode, app/build, device/system, and optional network state
+- `privacy` policy values that document client sharing limits
+
+`append_sos_location` receives `session_id`, one location snapshot, sequence number, optional direction of travel, and current device metadata.
+
+`resolve_sos` receives `session_id`, `resolution_reason`, `resolved_at`, and an optional final location.
+
+### Backend collections
+
+- `sos_sessions_private`: server-only active/resolved session records.
+- `sos_location_updates_private`: server-only append-only live update records, with retention/TTL.
+- `sos_notification_attempts_private`: trusted-contact notification attempts, updated with `sent`, `failed`, or `provider_unconfigured`.
+- `sos_idempotency_private`: maps user + client session UUID to the canonical server session.
+- `sos_rate_limits_private`: per-user activation cooldown/window tracking.
+- `sos_access_grants_private`: short-lived privileged grants for authorized responder/admin flows.
+- `sos_access_audit`: append-only audit events for admin, care-team, and law-enforcement access attempts.
+
+### Access limits
+
+Law-enforcement and admin access must be audited, time-limited, and restricted to active SOS sessions. PulseTrackr should not imply automatic law-enforcement dispatch. Any authorized responder access should happen through privileged backend code that verifies the session is active, returns only the minimum exact-location/contact data needed, records actor/reason/decision/expiry in `sos_access_audit`, and expires access unless the session remains active and policy allows renewal.
+
+### Backend delivery implementation
+
+The Firebase backend now lives in this repo:
+
+- `firebase.json` configures Firestore rules/indexes and local emulators for Auth, Functions, and Firestore.
+- `firestore.rules` denies direct client access to raw SOS location/session/notification/idempotency/rate-limit collections.
+- `functions/src/index.js` implements callable SOS endpoints:
+  - `activate_sos`: auth/App Check, idempotency, rate limits, server-side trail caps, private session write, audit write, notification queue + delivery attempt.
+  - `append_sos_location`: auth/App Check, owner check, active/unexpired session check, idempotent sequence updates, append-only update records.
+  - `resolve_sos`: auth/App Check, owner check, supported resolution reasons, idempotent resolution, audit write.
+  - `request_sos_session_access`: custom-claim gated access for `sosAdmin`, `careTeam`, or `lawEnforcement`, active-session only, audited, short-lived grants.
+- `functions/src/sosShared.js` keeps the validation logic pure and covered by `node --test`.
+- `functions/src/notificationProviders.js` sends SMS/phone calls with Twilio and email with SendGrid when credentials are configured. Missing credentials are recorded as `provider_unconfigured`, never as a successful alert.
+
+Production still needs provider secrets, sender verification, delivery-receipt monitoring, and a documented incident-response owner before any live SOS launch. The code path is now real, but operations must be real too.
+
+### Firebase project state
+
+The local Firebase CLI can see the `pulsetracker-0000` Firebase project, and `.firebaserc` maps `default`/`production` to that project. The live project currently has existing Python functions, so this repo uses the separate Functions codebase `pulsetrackr-sos` for SOS to avoid deleting or reconciling unrelated deployed functions. A deploy still requires intentional operator action:
+
+```sh
+firebase deploy --only functions,firestore:rules,firestore:indexes
+```
+
+Before deploy, configure secrets with `firebase functions:secrets:set` for Twilio and SendGrid, then assign custom responder claims through `functions/scripts/setSosRoleClaim.js`.

@@ -15,5 +15,6 @@ struct PulseMapView: View {
         PulseMapView()
             .environmentObject(IncidentStore())
             .environmentObject(LocationManager())
+            .environmentObject(SOSStore())
     }
 }

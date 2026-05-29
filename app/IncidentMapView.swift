@@ -4,6 +4,7 @@ import SwiftUI
 struct IncidentMapView: View {
     @EnvironmentObject private var incidentStore: IncidentStore
     @EnvironmentObject private var locationManager: LocationManager
+    @EnvironmentObject private var sosStore: SOSStore
     @AppStorage(AppStorageKey.watchRadius) private var watchRadius = 3.0
     @AppStorage(AppStorageKey.urgentAlerts) private var urgentAlerts = true
     @AppStorage(AppStorageKey.communityAlerts) private var communityAlerts = true
@@ -29,6 +30,26 @@ struct IncidentMapView: View {
         ZStack(alignment: .bottom) {
             Map(position: $cameraPosition) {
                 UserAnnotation()
+
+                if sosStore.trail.count > 1 {
+                    MapPolyline(coordinates: sosStore.trail.map(\.coordinate))
+                        .stroke(.cyan.opacity(0.55), style: StrokeStyle(lineWidth: 4, lineCap: .round, lineJoin: .round))
+                }
+
+                ForEach(sosStore.trailArtifacts) { artifact in
+                    Annotation("Recent movement", coordinate: artifact.coordinate) {
+                        SOSTrailBreadcrumb(artifact: artifact)
+                    }
+                }
+
+                if let lastKnownCoordinate = sosStore.lastKnownCoordinate {
+                    Annotation("Last known location", coordinate: lastKnownCoordinate) {
+                        SOSLastKnownMarker(
+                            isActive: sosStore.isActive,
+                            accuracy: sosStore.lastKnownPoint?.horizontalAccuracy
+                        )
+                    }
+                }
 
                 ForEach(visibleIncidents) { incident in
                     Annotation(incident.title, coordinate: incident.coordinate) {
@@ -56,6 +77,7 @@ struct IncidentMapView: View {
             mapShade
 
             mapSummary
+            SOSOverlayView()
         }
         .navigationTitle("Live Map")
         .navigationBarTitleDisplayMode(.inline)
@@ -167,14 +189,7 @@ private struct LiveIncidentPin: View {
 
     var body: some View {
         ZStack {
-            Circle()
-                .fill(incident.category.color.opacity(0.24))
-                .frame(width: 74, height: 74)
-                .blur(radius: 4)
-
-            Circle()
-                .stroke(incident.category.color.opacity(0.55), lineWidth: 2)
-                .frame(width: 58, height: 58)
+            IncidentDangerHalo(incident: incident)
 
             Image(systemName: incident.subtype.icon)
                 .font(.system(size: 23, weight: .heavy))
@@ -295,5 +310,6 @@ private struct FeaturedIncidentCard: View {
         IncidentMapView()
             .environmentObject(IncidentStore())
             .environmentObject(LocationManager())
+            .environmentObject(SOSStore())
     }
 }

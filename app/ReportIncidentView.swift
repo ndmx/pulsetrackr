@@ -262,7 +262,7 @@ private struct ReportHero: View {
                     .background(.red, in: Circle())
             }
 
-            Label(locationStatus, systemImage: hasPrivateCoordinate ? "lock.location.fill" : "location.slash.fill")
+            Label(locationStatus, systemImage: hasPrivateCoordinate ? "location.circle.fill" : "location.slash.fill")
                 .font(.caption)
                 .fontWeight(.heavy)
                 .foregroundStyle(hasPrivateCoordinate ? .green : .orange)
@@ -487,7 +487,7 @@ private struct PrivacyPanel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Label(locationStatus, systemImage: "lock.location.fill")
+            Label(locationStatus, systemImage: "location.circle.fill")
                 .font(.subheadline)
                 .fontWeight(.bold)
             Text("Exact reporter location stays private to the app. The public map shows an approximate incident area.")

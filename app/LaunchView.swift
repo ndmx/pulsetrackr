@@ -1,5 +1,68 @@
 import SwiftUI
 
+struct OpeningSplashView: View {
+    @State private var pulseOpacity: CGFloat = 0.42
+    @State private var pulseScale: CGFloat = 0.92
+    @State private var logoOpacity: CGFloat = 0
+    @State private var logoScale: CGFloat = 0.86
+    @State private var wordmarkOpacity: CGFloat = 0
+
+    var body: some View {
+        ZStack {
+            Color.black.ignoresSafeArea()
+
+            VStack(spacing: 22) {
+                ZStack {
+                    ForEach(0..<4, id: \.self) { index in
+                        Circle()
+                            .stroke(Color.red.opacity(0.20 - Double(index) * 0.04), lineWidth: 1.2)
+                            .frame(width: 88 + CGFloat(index * 46), height: 88 + CGFloat(index * 46))
+                            .scaleEffect(pulseScale + CGFloat(index) * 0.06)
+                            .opacity(pulseOpacity)
+                    }
+
+                    Image(systemName: "dot.radiowaves.left.and.right")
+                        .font(.system(size: 38, weight: .heavy))
+                        .foregroundStyle(.red)
+                        .frame(width: 86, height: 86)
+                        .background(Color.red.opacity(0.13), in: Circle())
+                        .overlay(Circle().stroke(Color.red.opacity(0.30), lineWidth: 1.5))
+                        .scaleEffect(logoScale)
+                        .opacity(logoOpacity)
+                }
+
+                HStack(alignment: .lastTextBaseline, spacing: 1) {
+                    Text("Pulse")
+                        .font(.system(size: 38, weight: .heavy, design: .rounded))
+                        .foregroundStyle(.white)
+                    Text("trackr")
+                        .font(.system(size: 38, weight: .thin, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.50))
+                }
+                .opacity(wordmarkOpacity)
+            }
+        }
+        .preferredColorScheme(.dark)
+        .onAppear { runOpeningAnimation() }
+    }
+
+    private func runOpeningAnimation() {
+        withAnimation(.easeInOut(duration: 1.2).repeatForever(autoreverses: true)) {
+            pulseScale = 1.18
+            pulseOpacity = 0.10
+        }
+
+        withAnimation(.spring(response: 0.62, dampingFraction: 0.72).delay(0.08)) {
+            logoOpacity = 1
+            logoScale = 1
+        }
+
+        withAnimation(.easeOut(duration: 0.42).delay(0.42)) {
+            wordmarkOpacity = 1
+        }
+    }
+}
+
 struct LaunchView: View {
     var onContinue: () -> Void
 
@@ -95,7 +158,7 @@ struct LaunchView: View {
                 description: "Snap a photo, record audio, or type — takes under 20 seconds"
             )
             FeatureRow(
-                icon: "lock.location.fill",
+                icon: "location.circle.fill",
                 color: .green,
                 title: "Your location stays private",
                 description: "The map shows areas only — your exact spot is never shared"

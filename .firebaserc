@@ -1,0 +1,6 @@
+{
+  "projects": {
+    "default": "pulsetracker-0000",
+    "production": "pulsetracker-0000"
+  }
+}

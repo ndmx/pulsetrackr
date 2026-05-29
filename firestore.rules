@@ -1,0 +1,62 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isPulsetrackrAdmin() {
+      return signedIn()
+        && (request.auth.token.sosAdmin == true
+          || request.auth.token.careTeam == true
+          || request.auth.token.lawEnforcement == true);
+    }
+
+    match /safety_incidents_public/{incidentId} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    match /safety_reports_private/{reportId} {
+      allow read, write: if false;
+    }
+
+    match /safety_incident_signals/{signalId} {
+      allow read, write: if false;
+    }
+
+    match /sos_sessions_private/{sessionId} {
+      allow read, write: if false;
+    }
+
+    match /sos_location_updates_private/{updateId} {
+      allow read, write: if false;
+    }
+
+    match /sos_notification_attempts_private/{attemptId} {
+      allow read, write: if false;
+    }
+
+    match /sos_idempotency_private/{idempotencyId} {
+      allow read, write: if false;
+    }
+
+    match /sos_rate_limits_private/{rateLimitId} {
+      allow read, write: if false;
+    }
+
+    match /sos_access_grants_private/{grantId} {
+      allow read, write: if false;
+    }
+
+    match /sos_access_audit/{auditId} {
+      allow read: if isPulsetrackrAdmin();
+      allow write: if false;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

@@ -6,6 +6,7 @@ import SwiftUI
 struct MapboxIncidentMapView: View {
     @EnvironmentObject private var incidentStore: IncidentStore
     @EnvironmentObject private var locationManager: LocationManager
+    @EnvironmentObject private var sosStore: SOSStore
     @AppStorage(AppStorageKey.watchRadius) private var watchRadius = 3.0
     @AppStorage(AppStorageKey.urgentAlerts) private var urgentAlerts = true
     @AppStorage(AppStorageKey.communityAlerts) private var communityAlerts = true
@@ -24,6 +25,25 @@ struct MapboxIncidentMapView: View {
             Map(viewport: $viewport) {
                 Puck2D(bearing: .heading)
                     .showsAccuracyRing(true)
+
+                ForEvery(sosStore.trailArtifacts) { artifact in
+                    MapViewAnnotation(coordinate: artifact.coordinate) {
+                        SOSTrailBreadcrumb(artifact: artifact)
+                    }
+                    .allowOverlap(true)
+                    .allowZElevate(true)
+                }
+
+                if let lastKnownCoordinate = sosStore.lastKnownCoordinate {
+                    MapViewAnnotation(coordinate: lastKnownCoordinate) {
+                        SOSLastKnownMarker(
+                            isActive: sosStore.isActive,
+                            accuracy: sosStore.lastKnownPoint?.horizontalAccuracy
+                        )
+                    }
+                    .allowOverlap(true)
+                    .allowZElevate(true)
+                }
 
                 ForEvery(activeMapIncidents) { incident in
                     MapViewAnnotation(coordinate: incident.coordinate) {
@@ -48,6 +68,7 @@ struct MapboxIncidentMapView: View {
             mapShade
             mapHeader
             mapSummary
+            SOSOverlayView()
         }
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.hidden, for: .navigationBar)
@@ -230,13 +251,7 @@ private struct MapboxIncidentPin: View {
 
     var body: some View {
         ZStack {
-            Circle()
-                .fill(incident.category.color.opacity(0.17))
-                .frame(width: radiusDiameter)
-                .overlay(
-                    Circle()
-                        .stroke(incident.category.color.opacity(0.22), lineWidth: 1)
-                )
+            IncidentDangerHalo(incident: incident)
 
             Circle()
                 .fill(.black.opacity(0.88))
@@ -255,10 +270,6 @@ private struct MapboxIncidentPin: View {
                 .background(incident.confidence.color, in: Circle())
                 .offset(x: 20, y: -20)
         }
-    }
-
-    private var radiusDiameter: CGFloat {
-        incident.severity == .urgent ? 146 : 96
     }
 
     private var iconSize: CGFloat {
