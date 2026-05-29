@@ -163,10 +163,10 @@ final class IncidentStore: ObservableObject {
         near coordinate: CLLocationCoordinate2D?
     ) -> [Incident] {
         activeIncidents.filter { incident in
-            let isUrgent = IncidentCategory.urgentTypes.contains(incident.category)
-            let isCommunity = IncidentCategory.communityTypes.contains(incident.category)
-            if isUrgent && !urgentAlerts { return false }
-            if isCommunity && !communityAlerts { return false }
+            let isUrgentAlert = IncidentCategory.urgentTypes.contains(incident.category) || incident.isHighRisk
+            let isCommunityNotice = !isUrgentAlert && IncidentCategory.communityTypes.contains(incident.category)
+            if isUrgentAlert && !urgentAlerts { return false }
+            if isCommunityNotice && !communityAlerts { return false }
             guard let userCoord = coordinate else { return true }
             // A locationless incident can't be matched to a radius — exclude it
             // from distance-filtered "nearby" alerts.

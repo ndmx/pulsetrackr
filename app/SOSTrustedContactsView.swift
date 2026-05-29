@@ -1,9 +1,13 @@
+import ContactsUI
 import SwiftUI
 
 struct SOSTrustedContactsView: View {
     @EnvironmentObject private var sosStore: SOSStore
     @State private var editingContact: SOSTrustedContact?
+    @State private var importedContact: SOSTrustedContact?
     @State private var isAddingContact = false
+    @State private var isPickingContact = false
+    @State private var contactImportError: String?
 
     var body: some View {
         ScrollView {
@@ -21,9 +25,19 @@ struct SOSTrustedContactsView: View {
         .preferredColorScheme(.dark)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    editingContact = nil
-                    isAddingContact = true
+                Menu {
+                    Button {
+                        isPickingContact = true
+                    } label: {
+                        Label("Import from Contacts", systemImage: "person.crop.circle.badge.plus")
+                    }
+
+                    Button {
+                        editingContact = nil
+                        isAddingContact = true
+                    } label: {
+                        Label("Add manually", systemImage: "square.and.pencil")
+                    }
                 } label: {
                     Image(systemName: "person.badge.plus")
                         .font(.headline)
@@ -33,7 +47,7 @@ struct SOSTrustedContactsView: View {
         }
         .sheet(isPresented: $isAddingContact) {
             NavigationStack {
-                SOSTrustedContactEditorView(contact: nil)
+                SOSTrustedContactEditorView(contact: nil, isNewContact: true)
                     .environmentObject(sosStore)
             }
             .presentationDetents([.large])
@@ -44,6 +58,33 @@ struct SOSTrustedContactsView: View {
                     .environmentObject(sosStore)
             }
             .presentationDetents([.large])
+        }
+        .sheet(item: $importedContact) { contact in
+            NavigationStack {
+                SOSTrustedContactEditorView(contact: contact, isNewContact: true)
+                    .environmentObject(sosStore)
+            }
+            .presentationDetents([.large])
+        }
+        .sheet(isPresented: $isPickingContact) {
+            SOSContactPicker(
+                onSelect: { draft in
+                    importedContact = draft
+                    contactImportError = nil
+                },
+                onIncompleteSelection: {
+                    contactImportError = "That contact has no phone number or email address."
+                }
+            )
+            .ignoresSafeArea()
+        }
+        .alert("Could not import contact", isPresented: Binding(
+            get: { contactImportError != nil },
+            set: { if !$0 { contactImportError = nil } }
+        )) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(contactImportError ?? "")
         }
         .onAppear {
             sosStore.loadTrustedContacts()
@@ -125,15 +166,25 @@ struct SOSTrustedContactsView: View {
             }
 
             Button {
-                editingContact = nil
-                isAddingContact = true
+                isPickingContact = true
             } label: {
-                Label("Add contact", systemImage: "plus")
+                Label("Import from Contacts", systemImage: "person.crop.circle.badge.plus")
                     .font(.subheadline)
                     .fontWeight(.bold)
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(SOSFilledButtonStyle(tint: .red))
+
+            Button {
+                editingContact = nil
+                isAddingContact = true
+            } label: {
+                Label("Add manually", systemImage: "square.and.pencil")
+                    .font(.subheadline)
+                    .fontWeight(.bold)
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(SOSOutlineButtonStyle(tint: .white.opacity(0.74)))
         }
         .cardPanel(backgroundOpacity: 0.07)
     }
@@ -223,6 +274,7 @@ private struct SOSTrustedContactEditorView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var sosStore: SOSStore
     let contact: SOSTrustedContact?
+    let isNewContact: Bool
 
     @State private var displayName: String
     @State private var relationshipLabel: String
@@ -231,8 +283,9 @@ private struct SOSTrustedContactEditorView: View {
     @State private var channels: Set<SOSTrustedContactChannel>
     @State private var isActive: Bool
 
-    init(contact: SOSTrustedContact?) {
+    init(contact: SOSTrustedContact?, isNewContact: Bool = false) {
         self.contact = contact
+        self.isNewContact = isNewContact
         _displayName = State(initialValue: contact?.displayName ?? "")
         _relationshipLabel = State(initialValue: contact?.relationshipLabel ?? "")
         _phoneNumber = State(initialValue: contact?.phoneNumber ?? "")
@@ -252,7 +305,7 @@ private struct SOSTrustedContactEditorView: View {
             .padding(.bottom, 20)
         }
         .background(.black)
-        .navigationTitle(contact == nil ? "Add contact" : "Edit contact")
+        .navigationTitle(isNewContact ? "Add contact" : "Edit contact")
         .navigationBarTitleDisplayMode(.inline)
         .preferredColorScheme(.dark)
         .toolbar {
@@ -410,6 +463,88 @@ private struct SOSFilledButtonStyle: ButtonStyle {
             .padding(.vertical, 12)
             .background(tint.opacity(configuration.isPressed ? 0.72 : 0.92), in: Capsule())
             .scaleEffect(configuration.isPressed ? 0.98 : 1)
+    }
+}
+
+private struct SOSOutlineButtonStyle: ButtonStyle {
+    var tint: Color
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .foregroundStyle(tint)
+            .padding(.vertical, 12)
+            .background(.white.opacity(configuration.isPressed ? 0.12 : 0.06), in: Capsule())
+            .overlay(Capsule().stroke(.white.opacity(0.12), lineWidth: 1))
+            .scaleEffect(configuration.isPressed ? 0.98 : 1)
+    }
+}
+
+private struct SOSContactPicker: UIViewControllerRepresentable {
+    var onSelect: (SOSTrustedContact) -> Void
+    var onIncompleteSelection: () -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onSelect: onSelect, onIncompleteSelection: onIncompleteSelection)
+    }
+
+    func makeUIViewController(context: Context) -> CNContactPickerViewController {
+        let picker = CNContactPickerViewController()
+        picker.delegate = context.coordinator
+        picker.displayedPropertyKeys = [
+            CNContactGivenNameKey,
+            CNContactFamilyNameKey,
+            CNContactPhoneNumbersKey,
+            CNContactEmailAddressesKey
+        ]
+        return picker
+    }
+
+    func updateUIViewController(_ uiViewController: CNContactPickerViewController, context: Context) {}
+
+    final class Coordinator: NSObject, CNContactPickerDelegate {
+        private let onSelect: (SOSTrustedContact) -> Void
+        private let onIncompleteSelection: () -> Void
+
+        init(
+            onSelect: @escaping (SOSTrustedContact) -> Void,
+            onIncompleteSelection: @escaping () -> Void
+        ) {
+            self.onSelect = onSelect
+            self.onIncompleteSelection = onIncompleteSelection
+        }
+
+        func contactPicker(_ picker: CNContactPickerViewController, didSelect contact: CNContact) {
+            let phoneNumber = contact.phoneNumbers.first?.value.stringValue
+            let emailAddress = contact.emailAddresses.first?.value as String?
+
+            guard Self.cleaned(phoneNumber) != nil || Self.cleaned(emailAddress) != nil else {
+                onIncompleteSelection()
+                return
+            }
+
+            let formattedName = CNContactFormatter.string(from: contact, style: .fullName)
+            let fallbackName = phoneNumber ?? emailAddress ?? "Trusted contact"
+            var channels: Set<SOSTrustedContactChannel> = []
+            if Self.cleaned(phoneNumber) != nil {
+                channels.insert(.sms)
+            }
+            if Self.cleaned(emailAddress) != nil {
+                channels.insert(.email)
+            }
+
+            onSelect(SOSTrustedContact(
+                displayName: Self.cleaned(formattedName) ?? fallbackName,
+                phoneNumber: phoneNumber,
+                emailAddress: emailAddress,
+                notificationChannels: channels.isEmpty ? [.sms] : channels,
+                consentedAt: Date()
+            ))
+        }
+
+        private static func cleaned(_ value: String?) -> String? {
+            let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed?.isEmpty == false ? trimmed : nil
+        }
     }
 }
 

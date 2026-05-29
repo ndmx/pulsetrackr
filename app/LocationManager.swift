@@ -2,6 +2,7 @@ import CoreLocation
 
 final class LocationManager: NSObject, ObservableObject {
     @Published private(set) var authorizationStatus: CLAuthorizationStatus
+    @Published private(set) var accuracyAuthorization: CLAccuracyAuthorization
     @Published private(set) var currentCoordinate: CLLocationCoordinate2D?
     @Published private(set) var currentLocation: CLLocation?
 
@@ -30,6 +31,7 @@ final class LocationManager: NSObject, ObservableObject {
 
     override init() {
         authorizationStatus = manager.authorizationStatus
+        accuracyAuthorization = manager.accuracyAuthorization
         super.init()
 
         manager.delegate = self
@@ -66,6 +68,7 @@ final class LocationManager: NSObject, ObservableObject {
 extension LocationManager: CLLocationManagerDelegate {
     func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
         authorizationStatus = manager.authorizationStatus
+        accuracyAuthorization = manager.accuracyAuthorization
 
         if authorizationStatus == .authorizedAlways || authorizationStatus == .authorizedWhenInUse {
             manager.requestLocation()
@@ -74,6 +77,7 @@ extension LocationManager: CLLocationManagerDelegate {
     }
 
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        accuracyAuthorization = manager.accuracyAuthorization
         guard let location = locations.last else { return }
         currentLocation = location
         currentCoordinate = location.coordinate
@@ -81,6 +85,7 @@ extension LocationManager: CLLocationManagerDelegate {
     }
 
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
+        accuracyAuthorization = manager.accuracyAuthorization
         currentLocation = manager.location
         currentCoordinate = manager.location?.coordinate
     }

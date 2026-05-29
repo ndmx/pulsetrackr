@@ -1,6 +1,8 @@
+import CoreLocation
 import SwiftUI
 
 struct SettingsView: View {
+    @EnvironmentObject private var locationManager: LocationManager
     @EnvironmentObject private var sosStore: SOSStore
     @AppStorage(AppStorageKey.watchRadius) private var watchRadius = 3.0
     @AppStorage(AppStorageKey.urgentAlerts) private var urgentAlerts = true
@@ -71,7 +73,7 @@ struct SettingsView: View {
                 icon: "exclamationmark.triangle.fill",
                 color: .red,
                 label: "Urgent safety alerts",
-                description: "Fires, armed incidents, medical emergencies",
+                description: "Show high-risk reports in your watch area",
                 isOn: $urgentAlerts
             )
 
@@ -83,9 +85,14 @@ struct SettingsView: View {
                 icon: "person.3.fill",
                 color: .blue,
                 label: "Community notices",
-                description: "Road blocks, outages, local warnings",
+                description: "Show lower-risk road, utility, weather, and local notices",
                 isOn: $communityAlerts
             )
+
+            Text("These filters apply to the feed and map inside your watch area.")
+                .font(.caption)
+                .foregroundStyle(.white.opacity(0.42))
+                .padding(.top, 12)
         }
         .cardPanel()
     }
@@ -97,9 +104,19 @@ struct SettingsView: View {
             SettingsToggleRow(
                 icon: "location.slash.fill",
                 color: .teal,
-                label: "Hide my exact location",
-                description: "Others see only the general incident area, not where you are",
+                label: "Hide exact report location",
+                description: "Public incident pins are fuzzed to a nearby area",
                 isOn: $useApproximateLocation
+            )
+
+            Divider()
+                .background(.white.opacity(0.07))
+
+            PrecisionLocationRow(
+                title: preciseLocationTitle,
+                detail: preciseLocationDetail,
+                color: preciseLocationColor,
+                showsSettingsButton: preciseLocationNeedsSettings
             )
 
             Text("During SOS, exact location is shared with your trusted contacts only after you activate it. PulseTrackr does not automatically contact police, ambulance, or emergency services.")
@@ -180,6 +197,54 @@ struct SettingsView: View {
         case .localOnly, .ready: sosStore.activeTrustedContacts.isEmpty ? .orange : .green
         }
     }
+
+    private var preciseLocationTitle: String {
+        guard locationManager.authorizationStatus == .authorizedAlways ||
+              locationManager.authorizationStatus == .authorizedWhenInUse else {
+            return "Precise Location unavailable"
+        }
+
+        switch locationManager.accuracyAuthorization {
+        case .fullAccuracy:
+            return "Precise Location on"
+        case .reducedAccuracy:
+            return "Precise Location off"
+        @unknown default:
+            return "Precise Location unknown"
+        }
+    }
+
+    private var preciseLocationDetail: String {
+        guard locationManager.authorizationStatus == .authorizedAlways ||
+              locationManager.authorizationStatus == .authorizedWhenInUse else {
+            return "Allow location access in iOS Settings to enable watch-area alerts."
+        }
+
+        switch locationManager.accuracyAuthorization {
+        case .fullAccuracy:
+            return "iOS is allowing PulseTrackr to use full accuracy when needed."
+        case .reducedAccuracy:
+            return "iOS is sharing approximate location only; watch area and SOS may be less precise."
+        @unknown default:
+            return "iOS did not report the current accuracy mode."
+        }
+    }
+
+    private var preciseLocationColor: Color {
+        guard locationManager.authorizationStatus == .authorizedAlways ||
+              locationManager.authorizationStatus == .authorizedWhenInUse else {
+            return .orange
+        }
+        return locationManager.accuracyAuthorization == .fullAccuracy ? .green : .orange
+    }
+
+    private var preciseLocationNeedsSettings: Bool {
+        guard locationManager.authorizationStatus == .authorizedAlways ||
+              locationManager.authorizationStatus == .authorizedWhenInUse else {
+            return true
+        }
+        return locationManager.accuracyAuthorization != .fullAccuracy
+    }
 }
 
 struct SettingsSectionHeader: View {
@@ -254,9 +319,60 @@ private struct StatusRow: View {
     }
 }
 
+private struct PrecisionLocationRow: View {
+    var title: String
+    var detail: String
+    var color: Color
+    var showsSettingsButton: Bool
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 14) {
+            Image(systemName: "location.viewfinder")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(color)
+                .frame(width: 36, height: 36)
+                .background(color.opacity(0.14), in: RoundedRectangle(cornerRadius: 10))
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.white)
+                Text(detail)
+                    .font(.caption)
+                    .foregroundStyle(.white.opacity(0.48))
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if showsSettingsButton {
+                    Button {
+                        if let url = URL(string: UIApplication.openSettingsURLString) {
+                            UIApplication.shared.open(url)
+                        }
+                    } label: {
+                        Text("Open iOS Settings")
+                            .font(.caption)
+                            .fontWeight(.bold)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.white.opacity(0.78))
+                    .padding(.top, 4)
+                }
+            }
+
+            Spacer()
+
+            Circle()
+                .fill(color)
+                .frame(width: 7, height: 7)
+                .padding(.top, 14)
+        }
+    }
+}
+
 #Preview {
     NavigationStack {
         SettingsView()
+            .environmentObject(LocationManager())
             .environmentObject(SOSStore())
     }
 }

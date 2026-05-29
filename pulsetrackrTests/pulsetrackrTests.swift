@@ -239,6 +239,84 @@ struct IncidentIsHighRiskTests {
     }
 }
 
+@Suite("IncidentStore alert filters")
+struct IncidentStoreAlertFilterTests {
+    private let userCoordinate = CLLocationCoordinate2D(latitude: 6.5244, longitude: 3.3792)
+
+    @Test @MainActor func highRiskCommunityCategoryUsesUrgentToggle() {
+        let store = IncidentStore(remoteStore: nil)
+        store.addIncident(
+            title: "Bridge blocked",
+            summary: "Urgent traffic risk.",
+            category: .traffic,
+            subtype: .roadblock,
+            severity: .urgent,
+            neighborhood: "Test",
+            reporterCoordinate: userCoordinate
+        )
+
+        let visible = store.nearbyIncidents(
+            urgentAlerts: true,
+            communityAlerts: false,
+            watchRadius: 15,
+            near: userCoordinate
+        )
+
+        #expect(visible.count == 1)
+    }
+
+    @Test @MainActor func urgentToggleHidesHighRiskCommunityCategory() {
+        let store = IncidentStore(remoteStore: nil)
+        store.addIncident(
+            title: "Bridge blocked",
+            summary: "Urgent traffic risk.",
+            category: .traffic,
+            subtype: .roadblock,
+            severity: .urgent,
+            neighborhood: "Test",
+            reporterCoordinate: userCoordinate
+        )
+
+        let visible = store.nearbyIncidents(
+            urgentAlerts: false,
+            communityAlerts: true,
+            watchRadius: 15,
+            near: userCoordinate
+        )
+
+        #expect(visible.isEmpty)
+    }
+
+    @Test @MainActor func communityToggleControlsLowerRiskCommunityNotices() {
+        let store = IncidentStore(remoteStore: nil)
+        store.addIncident(
+            title: "Local notice",
+            summary: "Community watch update.",
+            category: .community,
+            subtype: .communityWatch,
+            severity: .low,
+            neighborhood: "Test",
+            reporterCoordinate: userCoordinate
+        )
+
+        let hidden = store.nearbyIncidents(
+            urgentAlerts: true,
+            communityAlerts: false,
+            watchRadius: 15,
+            near: userCoordinate
+        )
+        let visible = store.nearbyIncidents(
+            urgentAlerts: true,
+            communityAlerts: true,
+            watchRadius: 15,
+            near: userCoordinate
+        )
+
+        #expect(hidden.isEmpty)
+        #expect(visible.count == 1)
+    }
+}
+
 // MARK: - Incident.alertTone
 
 @Suite("Incident.alertTone")
