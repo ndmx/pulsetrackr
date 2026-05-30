@@ -44,16 +44,19 @@ enum IncidentCategory: String, CaseIterable, Identifiable {
         }
     }
 
+    /// Muted identity tones (Calm Authority). These mark *category*, not urgency —
+    /// severity carries the vivid alert color. Mid-luminance so they read on both
+    /// light and dark surfaces. Note: fire and medical are now distinct.
     var color: Color {
         switch self {
-        case .security: .red
-        case .traffic: .orange
-        case .fire: .pink
-        case .medical: .pink
-        case .weather: .teal
-        case .utilities: .yellow
-        case .structure: .indigo
-        case .community: .green
+        case .security: Color(light: 0xB23A3A, dark: 0xD06A6A)   // muted red
+        case .traffic: Color(light: 0xB5701F, dark: 0xD79A4E)    // muted amber
+        case .fire: Color(light: 0xC0532F, dark: 0xDD7A52)       // ember orange
+        case .medical: Color(light: 0xA84368, dark: 0xCC6E92)    // rose
+        case .weather: Color(light: 0x35718C, dark: 0x5E9FB8)    // muted teal
+        case .utilities: Color(light: 0x9A7C1F, dark: 0xC2A647)  // muted gold
+        case .structure: Color(light: 0x5B549E, dark: 0x8A83C8)  // muted indigo
+        case .community: Color(light: 0x2F7A53, dark: 0x5CA77B)  // muted green
         }
     }
 }
@@ -355,6 +358,26 @@ enum CommunitySignal: String, CaseIterable, Identifiable {
         case .unsafe: "A nearby person marked the area unsafe. Avoid the area if possible."
         case .roadBlocked: "A nearby person reports the road is blocked."
         case .cleared: "A nearby person reports the area appears cleared."
+        }
+    }
+}
+
+enum IncidentConcernReason: String, CaseIterable, Identifiable {
+    case falseReport = "false_report"
+    case offensiveContent = "offensive_content"
+    case privateInformation = "private_information"
+    case dangerousAdvice = "dangerous_advice"
+    case spamOrAbuse = "spam_or_abuse"
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .falseReport: "False or misleading"
+        case .offensiveContent: "Offensive content"
+        case .privateInformation: "Shares private information"
+        case .dangerousAdvice: "Dangerous advice"
+        case .spamOrAbuse: "Spam or abuse"
         }
     }
 }

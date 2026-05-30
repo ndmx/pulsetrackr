@@ -242,8 +242,14 @@ struct IncidentIsHighRiskTests {
 @Suite("IncidentStore alert filters")
 struct IncidentStoreAlertFilterTests {
     private let userCoordinate = CLLocationCoordinate2D(latitude: 6.5244, longitude: 3.3792)
+    private let hiddenIncidentIDsKey = "hiddenIncidentIDs"
+
+    private func resetHiddenIncidents() {
+        UserDefaults.standard.removeObject(forKey: hiddenIncidentIDsKey)
+    }
 
     @Test @MainActor func highRiskCommunityCategoryUsesUrgentToggle() {
+        resetHiddenIncidents()
         let store = IncidentStore(remoteStore: nil)
         store.addIncident(
             title: "Bridge blocked",
@@ -266,6 +272,7 @@ struct IncidentStoreAlertFilterTests {
     }
 
     @Test @MainActor func urgentToggleHidesHighRiskCommunityCategory() {
+        resetHiddenIncidents()
         let store = IncidentStore(remoteStore: nil)
         store.addIncident(
             title: "Bridge blocked",
@@ -288,6 +295,7 @@ struct IncidentStoreAlertFilterTests {
     }
 
     @Test @MainActor func communityToggleControlsLowerRiskCommunityNotices() {
+        resetHiddenIncidents()
         let store = IncidentStore(remoteStore: nil)
         store.addIncident(
             title: "Local notice",
@@ -314,6 +322,28 @@ struct IncidentStoreAlertFilterTests {
 
         #expect(hidden.isEmpty)
         #expect(visible.count == 1)
+    }
+
+    @Test @MainActor func reportingConcernHidesIncidentLocally() {
+        resetHiddenIncidents()
+        defer { resetHiddenIncidents() }
+
+        let store = IncidentStore(remoteStore: nil)
+        store.addIncident(
+            title: "False alert",
+            summary: "This report should be hidden after concern reporting.",
+            category: .community,
+            subtype: .localWarning,
+            severity: .low,
+            neighborhood: "Test",
+            reporterCoordinate: userCoordinate
+        )
+
+        let incident = store.activeIncidents[0]
+        store.recordConcern(.falseReport, for: incident)
+
+        #expect(store.activeIncidents.isEmpty)
+        #expect(store.incident(withID: incident.id) != nil)
     }
 }
 

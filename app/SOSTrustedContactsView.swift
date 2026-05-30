@@ -11,18 +11,17 @@ struct SOSTrustedContactsView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: DS.Space.lg) {
                 header
                 contactList
                 privacyNote
             }
-            .padding(16)
-            .padding(.bottom, 28)
+            .padding(DS.Space.lg)
+            .padding(.bottom, DS.Space.xl)
         }
-        .background(.black)
+        .background(DS.Color.background)
         .navigationTitle("SOS contacts")
         .navigationBarTitleDisplayMode(.inline)
-        .preferredColorScheme(.dark)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
@@ -92,33 +91,32 @@ struct SOSTrustedContactsView: View {
     }
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .top, spacing: 12) {
+        VStack(alignment: .leading, spacing: DS.Space.md) {
+            HStack(alignment: .top, spacing: DS.Space.md) {
                 Image(systemName: "sos.circle.fill")
                     .font(.system(size: 30, weight: .heavy))
-                    .foregroundStyle(.red)
+                    .foregroundStyle(DS.Color.accent)
                     .frame(width: 46, height: 46)
-                    .background(.red.opacity(0.14), in: Circle())
+                    .background(DS.Color.accent.opacity(0.14), in: Circle())
 
                 VStack(alignment: .leading, spacing: 5) {
                     Text("People to alert first")
-                        .font(.title3)
-                        .fontWeight(.heavy)
-                        .foregroundStyle(.white)
+                        .font(.system(.title3, design: .rounded, weight: .bold))
+                        .foregroundStyle(DS.Color.textPrimary)
                     Text("When you activate SOS, PulseTrackr sends your last known location, recent direction of travel, and live updates to active contacts.")
-                        .font(.subheadline)
-                        .foregroundStyle(.white.opacity(0.62))
+                        .font(DS.Font.body())
+                        .foregroundStyle(DS.Color.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
 
-            HStack(spacing: 10) {
+            HStack(spacing: DS.Space.md) {
                 SOSMiniMetric(value: "\(sosStore.activeTrustedContacts.count)", label: "ready")
                 SOSMiniMetric(value: "\(sosStore.trustedContacts.count)", label: "saved")
                 SOSMiniMetric(value: "\(sosStore.alertedContacts.count)", label: "alerted")
             }
         }
-        .cardPanel(backgroundOpacity: 0.08)
+        .pulsePanel()
     }
 
     @ViewBuilder
@@ -126,7 +124,7 @@ struct SOSTrustedContactsView: View {
         if sosStore.trustedContacts.isEmpty {
             emptyState
         } else {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: DS.Space.md) {
                 SettingsSectionHeader(title: "Trusted group")
 
                 ForEach(sosStore.trustedContacts) { contact in
@@ -139,29 +137,28 @@ struct SOSTrustedContactsView: View {
                     }
                 }
             }
-            .cardPanel(backgroundOpacity: 0.07)
+            .pulsePanel()
         }
     }
 
     private var emptyState: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: DS.Space.md) {
             SettingsSectionHeader(title: "Trusted group")
 
-            HStack(spacing: 12) {
+            HStack(spacing: DS.Space.md) {
                 Image(systemName: "person.2.slash")
                     .font(.title3)
-                    .foregroundStyle(.white.opacity(0.62))
+                    .foregroundStyle(DS.Color.textSecondary)
                     .frame(width: 42, height: 42)
-                    .background(.white.opacity(0.08), in: Circle())
+                    .background(DS.Color.surfaceHigh, in: Circle())
 
                 VStack(alignment: .leading, spacing: 4) {
                     Text("No contacts yet")
-                        .font(.headline)
-                        .fontWeight(.bold)
-                        .foregroundStyle(.white)
+                        .font(DS.Font.cardTitle())
+                        .foregroundStyle(DS.Color.textPrimary)
                     Text("Add at least one person before travel so SOS has somewhere to send alerts.")
-                        .font(.caption)
-                        .foregroundStyle(.white.opacity(0.52))
+                        .font(DS.Font.caption())
+                        .foregroundStyle(DS.Color.textSecondary)
                 }
             }
 
@@ -169,38 +166,32 @@ struct SOSTrustedContactsView: View {
                 isPickingContact = true
             } label: {
                 Label("Import from Contacts", systemImage: "person.crop.circle.badge.plus")
-                    .font(.subheadline)
-                    .fontWeight(.bold)
-                    .frame(maxWidth: .infinity)
             }
-            .buttonStyle(SOSFilledButtonStyle(tint: .red))
+            .buttonStyle(DSPrimaryButtonStyle())
 
             Button {
                 editingContact = nil
                 isAddingContact = true
             } label: {
                 Label("Add manually", systemImage: "square.and.pencil")
-                    .font(.subheadline)
-                    .fontWeight(.bold)
-                    .frame(maxWidth: .infinity)
             }
-            .buttonStyle(SOSOutlineButtonStyle(tint: .white.opacity(0.74)))
+            .buttonStyle(DSSecondaryButtonStyle())
         }
-        .cardPanel(backgroundOpacity: 0.07)
+        .pulsePanel()
     }
 
     private var privacyNote: some View {
-        HStack(alignment: .top, spacing: 10) {
+        HStack(alignment: .top, spacing: DS.Space.md) {
             Image(systemName: "lock.shield.fill")
-                .foregroundStyle(.teal)
+                .foregroundStyle(DS.Color.positive)
                 .frame(width: 26)
 
             Text("Contacts are stored in the device Keychain. Exact location is shared only after you activate SOS, and PulseTrackr does not automatically contact police, ambulance, or emergency services. SOS history is kept only as long as needed for safety review and cleanup.")
-                .font(.caption)
-                .foregroundStyle(.white.opacity(0.50))
+                .font(DS.Font.caption())
+                .foregroundStyle(DS.Color.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(.horizontal, 4)
+        .padding(.horizontal, DS.Space.xs)
     }
 }
 
@@ -211,45 +202,42 @@ private struct SOSTrustedContactRow: View {
     var deleteAction: () -> Void
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: DS.Space.md) {
             Text(contact.initials)
-                .font(.caption)
-                .fontWeight(.heavy)
+                .font(.caption.weight(.heavy))
                 .foregroundStyle(.white)
                 .frame(width: 38, height: 38)
-                .background(contact.isDeliverable ? Color.red.opacity(0.78) : Color.white.opacity(0.12), in: Circle())
+                .background(contact.isDeliverable ? DS.Color.accent : DS.Color.textTertiary, in: Circle())
 
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 7) {
                     Text(contact.displayName)
-                        .font(.subheadline)
-                        .fontWeight(.bold)
-                        .foregroundStyle(.white)
+                        .font(DS.Font.body().weight(.bold))
+                        .foregroundStyle(DS.Color.textPrimary)
                         .lineLimit(1)
 
                     if contact.lastNotifiedAt != nil {
                         Image(systemName: "bell.badge.fill")
                             .font(.caption2)
-                            .foregroundStyle(.green)
+                            .foregroundStyle(DS.Color.positive)
                     }
                 }
 
                 Text(contact.destinationSummary)
-                    .font(.caption)
-                    .foregroundStyle(.white.opacity(0.56))
+                    .font(DS.Font.caption())
+                    .foregroundStyle(DS.Color.textSecondary)
                     .lineLimit(1)
 
                 Text(contact.channelSummary)
-                    .font(.caption2)
-                    .fontWeight(.semibold)
-                    .foregroundStyle(contact.isDeliverable ? .green.opacity(0.9) : .orange.opacity(0.95))
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(contact.isDeliverable ? DS.Color.positive : IncidentSeverity.high.tint)
             }
 
             Spacer()
 
             Toggle("", isOn: Binding(get: { contact.isActive }, set: { _ in toggleAction() }))
                 .labelsHidden()
-                .tint(.red)
+                .tint(DS.Color.accent)
 
             Menu {
                 Button("Edit", systemImage: "pencil", action: editAction)
@@ -257,15 +245,15 @@ private struct SOSTrustedContactRow: View {
             } label: {
                 Image(systemName: "ellipsis")
                     .font(.headline)
-                    .foregroundStyle(.white.opacity(0.72))
+                    .foregroundStyle(DS.Color.textSecondary)
                     .frame(width: 30, height: 30)
             }
         }
-        .padding(12)
-        .background(.black.opacity(0.28), in: RoundedRectangle(cornerRadius: 14))
+        .padding(DS.Space.md)
+        .background(DS.Color.surfaceHigh, in: RoundedRectangle(cornerRadius: DS.Radius.md, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 14)
-                .stroke(contact.isDeliverable ? .white.opacity(0.08) : .orange.opacity(0.32), lineWidth: 1)
+            RoundedRectangle(cornerRadius: DS.Radius.md, style: .continuous)
+                .stroke(contact.isDeliverable ? DS.Color.hairline : IncidentSeverity.high.tint.opacity(0.32), lineWidth: 1)
         )
     }
 }
@@ -296,18 +284,17 @@ private struct SOSTrustedContactEditorView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: DS.Space.lg) {
                 editorSection
                 channelSection
                 consentSection
             }
-            .padding(16)
-            .padding(.bottom, 20)
+            .padding(DS.Space.lg)
+            .padding(.bottom, DS.Space.lg)
         }
-        .background(.black)
+        .background(DS.Color.background)
         .navigationTitle(isNewContact ? "Add contact" : "Edit contact")
         .navigationBarTitleDisplayMode(.inline)
-        .preferredColorScheme(.dark)
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
                 Button("Cancel") { dismiss() }
@@ -322,7 +309,7 @@ private struct SOSTrustedContactEditorView: View {
     }
 
     private var editorSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: DS.Space.md) {
             SettingsSectionHeader(title: "Contact")
             SOSTextField(title: "Name", text: $displayName, icon: "person.fill")
             SOSTextField(title: "Relationship", text: $relationshipLabel, icon: "heart.fill")
@@ -331,42 +318,40 @@ private struct SOSTrustedContactEditorView: View {
 
             Toggle(isOn: $isActive) {
                 Label("Active during SOS", systemImage: "bell.fill")
-                    .font(.subheadline)
-                    .fontWeight(.semibold)
-                    .foregroundStyle(.white)
+                    .font(DS.Font.body().weight(.semibold))
+                    .foregroundStyle(DS.Color.textPrimary)
             }
-            .tint(.red)
+            .tint(DS.Color.accent)
         }
-        .cardPanel(backgroundOpacity: 0.08)
+        .pulsePanel()
     }
 
     private var channelSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: DS.Space.md) {
             SettingsSectionHeader(title: "Alert routes")
 
             ForEach(SOSTrustedContactChannel.allCases, id: \.self) { channel in
                 Toggle(isOn: channelBinding(channel)) {
                     Label(channel.label, systemImage: channel.iconName)
-                        .font(.subheadline)
-                        .fontWeight(.semibold)
-                        .foregroundStyle(.white.opacity(0.84))
+                        .font(DS.Font.body().weight(.semibold))
+                        .foregroundStyle(DS.Color.textPrimary)
                 }
-                .tint(.red)
+                .tint(DS.Color.accent)
             }
         }
-        .cardPanel(backgroundOpacity: 0.08)
+        .pulsePanel()
     }
 
     private var consentSection: some View {
-        HStack(alignment: .top, spacing: 10) {
+        HStack(alignment: .top, spacing: DS.Space.md) {
             Image(systemName: "checkmark.shield.fill")
-                .foregroundStyle(.green)
+                .foregroundStyle(DS.Color.positive)
             Text("Use contacts who know they may receive SOS location alerts from you. They should understand PulseTrackr alerts them directly and does not dispatch emergency services.")
-                .font(.caption)
-                .foregroundStyle(.white.opacity(0.52))
+                .font(DS.Font.caption())
+                .foregroundStyle(DS.Color.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(.horizontal, 4)
+        .padding(.horizontal, DS.Space.xs)
     }
 
     private var canSave: Bool {
@@ -413,21 +398,21 @@ private struct SOSTextField: View {
     var keyboard: UIKeyboardType = .default
 
     var body: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: DS.Space.md) {
             Image(systemName: icon)
-                .foregroundStyle(.white.opacity(0.42))
+                .foregroundStyle(DS.Color.textTertiary)
                 .frame(width: 22)
             TextField(title, text: $text)
                 .textInputAutocapitalization(title == "Email" ? .never : .words)
                 .keyboardType(keyboard)
                 .autocorrectionDisabled(title == "Email" || title == "Phone")
-                .foregroundStyle(.white)
+                .foregroundStyle(DS.Color.textPrimary)
         }
-        .padding(12)
-        .background(.black.opacity(0.34), in: RoundedRectangle(cornerRadius: 12))
+        .padding(DS.Space.md)
+        .background(DS.Color.surfaceHigh, in: RoundedRectangle(cornerRadius: DS.Radius.sm, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(.white.opacity(0.08), lineWidth: 1)
+            RoundedRectangle(cornerRadius: DS.Radius.sm, style: .continuous)
+                .stroke(DS.Color.hairline, lineWidth: 1)
         )
     }
 }
@@ -439,43 +424,16 @@ private struct SOSMiniMetric: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(value)
-                .font(.title3)
-                .fontWeight(.heavy)
-                .foregroundStyle(.white)
+                .font(.system(.title3, design: .rounded, weight: .heavy))
+                .foregroundStyle(DS.Color.textPrimary)
             Text(label)
-                .font(.caption2)
-                .fontWeight(.bold)
+                .font(.caption2.weight(.bold))
                 .textCase(.uppercase)
-                .foregroundStyle(.white.opacity(0.50))
+                .foregroundStyle(DS.Color.textTertiary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(10)
-        .background(.black.opacity(0.26), in: RoundedRectangle(cornerRadius: 12))
-    }
-}
-
-private struct SOSFilledButtonStyle: ButtonStyle {
-    var tint: Color
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .foregroundStyle(.white)
-            .padding(.vertical, 12)
-            .background(tint.opacity(configuration.isPressed ? 0.72 : 0.92), in: Capsule())
-            .scaleEffect(configuration.isPressed ? 0.98 : 1)
-    }
-}
-
-private struct SOSOutlineButtonStyle: ButtonStyle {
-    var tint: Color
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .foregroundStyle(tint)
-            .padding(.vertical, 12)
-            .background(.white.opacity(configuration.isPressed ? 0.12 : 0.06), in: Capsule())
-            .overlay(Capsule().stroke(.white.opacity(0.12), lineWidth: 1))
-            .scaleEffect(configuration.isPressed ? 0.98 : 1)
+        .padding(DS.Space.md)
+        .background(DS.Color.surfaceHigh, in: RoundedRectangle(cornerRadius: DS.Radius.sm, style: .continuous))
     }
 }
 

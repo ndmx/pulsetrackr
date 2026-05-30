@@ -88,22 +88,22 @@ private struct FeedMapboxPin: View {
     var body: some View {
         ZStack {
             Circle()
-                .fill(incident.category.color.opacity(0.18))
+                .fill(incident.severity.tint.opacity(0.18))
                 .frame(width: incident.isHighRisk ? 118 : 82, height: incident.isHighRisk ? 118 : 82)
                 .overlay(
                     Circle()
-                        .stroke(incident.category.color.opacity(0.20), lineWidth: 1)
+                        .stroke(incident.severity.tint.opacity(0.20), lineWidth: 1)
                 )
 
             Circle()
                 .fill(.black.opacity(0.88))
                 .frame(width: 44, height: 44)
-                .overlay(Circle().stroke(incident.category.color, lineWidth: 3))
-                .shadow(color: incident.category.color.opacity(0.70), radius: 15)
+                .overlay(Circle().stroke(incident.severity.tint, lineWidth: 3))
+                .shadow(color: incident.severity.tint.opacity(0.70), radius: 15)
 
             Image(systemName: incident.subtype.icon)
                 .font(.system(size: 19, weight: .heavy))
-                .foregroundStyle(incident.category == .security || incident.category == .fire ? incident.category.color : .white)
+                .foregroundStyle(.white)
 
             Image(systemName: incident.confidence.icon)
                 .font(.system(size: 9, weight: .black))

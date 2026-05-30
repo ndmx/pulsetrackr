@@ -53,12 +53,12 @@ struct SOSOverlayView: View {
         VStack(alignment: .trailing, spacing: 6) {
             ZStack {
                 Circle()
-                    .fill(Color.red.opacity(isHolding ? 0.28 : 0.18))
+                    .fill(DS.Color.accent.opacity(isHolding ? 0.28 : 0.18))
                     .frame(width: isHolding ? 84 : 70, height: isHolding ? 84 : 70)
 
                 Circle()
                     .trim(from: 0, to: isHolding ? 1 : 0.18)
-                    .stroke(.red, style: StrokeStyle(lineWidth: 4, lineCap: .round))
+                    .stroke(DS.Color.accent, style: StrokeStyle(lineWidth: 4, lineCap: .round))
                     .frame(width: 72, height: 72)
                     .rotationEffect(.degrees(-90))
 
@@ -72,7 +72,7 @@ struct SOSOverlayView: View {
                 .foregroundStyle(.white)
                 .frame(width: 58, height: 58)
                 .background(.black.opacity(0.84), in: Circle())
-                .overlay(Circle().stroke(.red.opacity(0.80), lineWidth: 2))
+                .overlay(Circle().stroke(DS.Color.accent.opacity(0.80), lineWidth: 2))
             }
             .contentShape(Circle())
             .gesture(activationGesture)
@@ -100,7 +100,7 @@ struct SOSOverlayView: View {
                 Text("No contacts set")
                     .font(.caption2)
                     .fontWeight(.bold)
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(IncidentSeverity.high.tint)
                     .padding(.horizontal, 9)
                     .padding(.vertical, 5)
                     .background(.black.opacity(0.58), in: Capsule())
@@ -113,7 +113,7 @@ struct SOSOverlayView: View {
             HStack(spacing: 9) {
                 Image(systemName: "sos.circle.fill")
                     .font(.title3)
-                    .foregroundStyle(.red)
+                    .foregroundStyle(DS.Color.accent)
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text("SOS active")
@@ -182,7 +182,7 @@ struct SOSOverlayView: View {
                             .fontWeight(.bold)
                             .frame(maxWidth: .infinity)
                     }
-                    .buttonStyle(SOSActionButtonStyle(tint: .yellow))
+                    .buttonStyle(SOSActionButtonStyle(tint: IncidentSeverity.medium.tint))
                 }
             }
 
@@ -205,7 +205,7 @@ struct SOSOverlayView: View {
                         .fontWeight(.bold)
                         .frame(maxWidth: .infinity)
                 }
-                .buttonStyle(SOSActionButtonStyle(tint: .red))
+                .buttonStyle(SOSActionButtonStyle(tint: DS.Color.accent))
             }
         }
         .padding(14)
@@ -213,7 +213,7 @@ struct SOSOverlayView: View {
         .background(.black.opacity(0.72), in: RoundedRectangle(cornerRadius: 18))
         .overlay(
             RoundedRectangle(cornerRadius: 18)
-                .stroke(.red.opacity(0.30), lineWidth: 1)
+                .stroke(DS.Color.accent.opacity(0.30), lineWidth: 1)
         )
         .shadow(color: .black.opacity(0.35), radius: 18, y: 12)
     }
@@ -241,7 +241,7 @@ struct SOSOverlayView: View {
             Label("No trusted contacts. Location is still saved locally.", systemImage: "person.crop.circle.badge.exclamationmark")
                 .font(.caption)
                 .fontWeight(.semibold)
-                .foregroundStyle(.orange)
+                .foregroundStyle(IncidentSeverity.high.tint)
                 .fixedSize(horizontal: false, vertical: true)
         } else {
             VStack(alignment: .leading, spacing: 6) {
@@ -255,7 +255,7 @@ struct SOSOverlayView: View {
                     HStack(spacing: 8) {
                         Image(systemName: sosStore.alertedContactIDs.contains(contact.id) ? "bell.badge.fill" : "bell.fill")
                             .font(.caption)
-                            .foregroundStyle(sosStore.alertedContactIDs.contains(contact.id) ? .green : .white.opacity(0.52))
+                            .foregroundStyle(sosStore.alertedContactIDs.contains(contact.id) ? DS.Color.positive : .white.opacity(0.52))
                             .frame(width: 18)
                         Text(contact.displayName)
                             .font(.caption)
@@ -266,7 +266,7 @@ struct SOSOverlayView: View {
                         Text(sosStore.alertedContactIDs.contains(contact.id) ? "alerted" : "ready")
                             .font(.caption2)
                             .fontWeight(.bold)
-                            .foregroundStyle(sosStore.alertedContactIDs.contains(contact.id) ? .green : .white.opacity(0.46))
+                            .foregroundStyle(sosStore.alertedContactIDs.contains(contact.id) ? DS.Color.positive : .white.opacity(0.46))
                     }
                 }
 
@@ -298,9 +298,9 @@ struct SOSOverlayView: View {
 
     private var deliveryColor: Color {
         switch sosStore.deliveryState {
-        case .delivered: .green
-        case .syncing: .yellow
-        case .failed: .orange
+        case .delivered: DS.Color.positive
+        case .syncing: IncidentSeverity.medium.tint
+        case .failed: IncidentSeverity.high.tint
         case .localOnly: .cyan
         case .ready: .white.opacity(0.82)
         }
@@ -374,7 +374,7 @@ private struct SOSActionButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .foregroundStyle(tint == .red ? .white : .black)
+            .foregroundStyle(tint == DS.Color.accent ? .white : .black)
             .padding(.vertical, 9)
             .background(tint.opacity(configuration.isPressed ? 0.72 : 0.92), in: Capsule())
             .scaleEffect(configuration.isPressed ? 0.97 : 1)

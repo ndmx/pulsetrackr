@@ -19,98 +19,95 @@ struct SettingsView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: DS.Space.lg) {
                 watchAreaSection
                 alertsSection
                 sosSection
                 privacySection
                 statusSection
             }
-            .padding(16)
-            .padding(.bottom, 24)
+            .padding(DS.Space.lg)
+            .padding(.bottom, DS.Space.xl)
         }
-        .background(.black)
+        .background(DS.Color.background)
         .navigationTitle("Settings")
         .navigationBarTitleDisplayMode(.large)
-        .preferredColorScheme(.dark)
-        .toolbarColorScheme(.dark, for: .navigationBar)
     }
 
     private var watchAreaSection: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: DS.Space.md) {
             SettingsSectionHeader(title: "Watch area")
 
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: DS.Space.md) {
                 HStack {
                     Text("Radius")
-                        .font(.subheadline)
-                        .foregroundStyle(.white.opacity(0.72))
+                        .font(DS.Font.body())
+                        .foregroundStyle(DS.Color.textSecondary)
                     Spacer()
                     Text(radiusLabel)
-                        .font(.subheadline)
-                        .fontWeight(.bold)
-                        .foregroundStyle(.white)
+                        .font(DS.Font.body().weight(.bold))
+                        .foregroundStyle(DS.Color.textPrimary)
                         .monospacedDigit()
                 }
 
                 Slider(value: $watchRadius, in: 1...15, step: 0.5)
-                    .tint(.red)
+                    .tint(DS.Color.accent)
 
                 Text("Incidents within this range show in your feed and can trigger alerts.")
-                    .font(.caption)
-                    .foregroundStyle(.white.opacity(0.42))
+                    .font(DS.Font.caption())
+                    .foregroundStyle(DS.Color.textTertiary)
             }
         }
-        .cardPanel()
+        .pulsePanel()
     }
 
     private var alertsSection: some View {
         VStack(alignment: .leading, spacing: 0) {
             SettingsSectionHeader(title: "Alerts")
-                .padding(.bottom, 14)
+                .padding(.bottom, DS.Space.md)
 
             SettingsToggleRow(
                 icon: "exclamationmark.triangle.fill",
-                color: .red,
+                color: DS.Color.accent,
                 label: "Urgent safety alerts",
                 description: "Show high-risk reports in your watch area",
                 isOn: $urgentAlerts
             )
 
             Divider()
-                .background(.white.opacity(0.07))
-                .padding(.vertical, 12)
+                .overlay(DS.Color.hairline)
+                .padding(.vertical, DS.Space.md)
 
             SettingsToggleRow(
                 icon: "person.3.fill",
-                color: .blue,
+                color: DS.Color.textSecondary,
                 label: "Community notices",
                 description: "Show lower-risk road, utility, weather, and local notices",
                 isOn: $communityAlerts
             )
 
             Text("These filters apply to the feed and map inside your watch area.")
-                .font(.caption)
-                .foregroundStyle(.white.opacity(0.42))
-                .padding(.top, 12)
+                .font(DS.Font.caption())
+                .foregroundStyle(DS.Color.textTertiary)
+                .padding(.top, DS.Space.md)
         }
-        .cardPanel()
+        .pulsePanel()
     }
 
     private var privacySection: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: DS.Space.md) {
             SettingsSectionHeader(title: "Privacy")
 
             SettingsToggleRow(
                 icon: "location.slash.fill",
-                color: .teal,
+                color: DS.Color.textSecondary,
                 label: "Hide exact report location",
                 description: "Public incident pins are fuzzed to a nearby area",
                 isOn: $useApproximateLocation
             )
 
             Divider()
-                .background(.white.opacity(0.07))
+                .overlay(DS.Color.hairline)
 
             PrecisionLocationRow(
                 title: preciseLocationTitle,
@@ -120,66 +117,64 @@ struct SettingsView: View {
             )
 
             Text("During SOS, exact location is shared with your trusted contacts only after you activate it. PulseTrackr does not automatically contact police, ambulance, or emergency services.")
-                .font(.caption)
-                .foregroundStyle(.white.opacity(0.50))
+                .font(DS.Font.caption())
+                .foregroundStyle(DS.Color.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .cardPanel()
+        .pulsePanel()
     }
 
     private var sosSection: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: DS.Space.md) {
             SettingsSectionHeader(title: "SOS")
 
             NavigationLink {
                 SOSTrustedContactsView()
             } label: {
-                HStack(spacing: 14) {
+                HStack(spacing: DS.Space.md) {
                     Image(systemName: "person.2.fill")
                         .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(.red)
+                        .foregroundStyle(DS.Color.accent)
                         .frame(width: 36, height: 36)
-                        .background(.red.opacity(0.14), in: RoundedRectangle(cornerRadius: 10))
+                        .background(DS.Color.accent.opacity(0.14), in: RoundedRectangle(cornerRadius: DS.Radius.sm, style: .continuous))
 
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Trusted contacts")
-                            .font(.subheadline)
-                            .fontWeight(.semibold)
-                            .foregroundStyle(.white)
+                            .font(DS.Font.body().weight(.semibold))
+                            .foregroundStyle(DS.Color.textPrimary)
                         Text(sosContactsDescription)
-                            .font(.caption)
-                            .foregroundStyle(.white.opacity(0.48))
+                            .font(DS.Font.caption())
+                            .foregroundStyle(DS.Color.textSecondary)
                     }
 
                     Spacer()
 
                     Image(systemName: "chevron.right")
-                        .font(.caption)
-                        .fontWeight(.bold)
-                        .foregroundStyle(.white.opacity(0.42))
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(DS.Color.textTertiary)
                 }
             }
             .buttonStyle(.plain)
 
             Divider()
-                .background(.white.opacity(0.07))
+                .overlay(DS.Color.hairline)
 
             StatusRow(icon: "tray.and.arrow.up.fill", label: sosStore.uploadStatusText, color: sosStatusColor)
         }
-        .cardPanel()
+        .pulsePanel()
     }
 
     private var statusSection: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: DS.Space.md) {
             SettingsSectionHeader(title: "App status")
 
-            VStack(spacing: 10) {
-                StatusRow(icon: "tray.full.fill", label: "Incident queue running", color: .green)
-                StatusRow(icon: "checkmark.shield.fill", label: "Community verification active", color: .green)
-                StatusRow(icon: "location.circle.fill", label: "Reporter locations protected", color: .green)
+            VStack(spacing: DS.Space.md) {
+                StatusRow(icon: "tray.full.fill", label: "Incident queue running", color: DS.Color.positive)
+                StatusRow(icon: "checkmark.shield.fill", label: "Community verification active", color: DS.Color.positive)
+                StatusRow(icon: "location.circle.fill", label: "Reporter locations protected", color: DS.Color.positive)
             }
         }
-        .cardPanel()
+        .pulsePanel()
     }
 
     private var sosContactsDescription: String {
@@ -191,10 +186,10 @@ struct SettingsView: View {
 
     private var sosStatusColor: Color {
         switch sosStore.deliveryState {
-        case .failed: .orange
-        case .syncing: .yellow
-        case .delivered: .green
-        case .localOnly, .ready: sosStore.activeTrustedContacts.isEmpty ? .orange : .green
+        case .failed: IncidentSeverity.high.tint
+        case .syncing: IncidentSeverity.medium.tint
+        case .delivered: DS.Color.positive
+        case .localOnly, .ready: sosStore.activeTrustedContacts.isEmpty ? IncidentSeverity.high.tint : DS.Color.positive
         }
     }
 
@@ -233,9 +228,9 @@ struct SettingsView: View {
     private var preciseLocationColor: Color {
         guard locationManager.authorizationStatus == .authorizedAlways ||
               locationManager.authorizationStatus == .authorizedWhenInUse else {
-            return .orange
+            return IncidentSeverity.high.tint
         }
-        return locationManager.accuracyAuthorization == .fullAccuracy ? .green : .orange
+        return locationManager.accuracyAuthorization == .fullAccuracy ? DS.Color.positive : IncidentSeverity.high.tint
     }
 
     private var preciseLocationNeedsSettings: Bool {
@@ -252,9 +247,8 @@ struct SettingsSectionHeader: View {
 
     var body: some View {
         Text(title.uppercased())
-            .font(.caption2)
-            .fontWeight(.heavy)
-            .foregroundStyle(.white.opacity(0.42))
+            .font(.caption2.weight(.bold))
+            .foregroundStyle(DS.Color.textTertiary)
             .kerning(1)
     }
 }
@@ -267,28 +261,27 @@ private struct SettingsToggleRow: View {
     @Binding var isOn: Bool
 
     var body: some View {
-        HStack(spacing: 14) {
+        HStack(spacing: DS.Space.md) {
             Image(systemName: icon)
                 .font(.system(size: 16, weight: .semibold))
                 .foregroundStyle(color)
                 .frame(width: 36, height: 36)
-                .background(color.opacity(0.14), in: RoundedRectangle(cornerRadius: 10))
+                .background(color.opacity(0.14), in: RoundedRectangle(cornerRadius: DS.Radius.sm, style: .continuous))
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(label)
-                    .font(.subheadline)
-                    .fontWeight(.semibold)
-                    .foregroundStyle(.white)
+                    .font(DS.Font.body().weight(.semibold))
+                    .foregroundStyle(DS.Color.textPrimary)
                 Text(description)
-                    .font(.caption)
-                    .foregroundStyle(.white.opacity(0.48))
+                    .font(DS.Font.caption())
+                    .foregroundStyle(DS.Color.textSecondary)
             }
 
             Spacer()
 
             Toggle("", isOn: $isOn)
                 .labelsHidden()
-                .tint(.red)
+                .tint(DS.Color.accent)
         }
     }
 }
@@ -299,16 +292,16 @@ private struct StatusRow: View {
     var color: Color
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: DS.Space.md) {
             Image(systemName: icon)
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(color)
                 .frame(width: 32, height: 32)
-                .background(color.opacity(0.13), in: RoundedRectangle(cornerRadius: 9))
+                .background(color.opacity(0.13), in: RoundedRectangle(cornerRadius: DS.Radius.sm, style: .continuous))
 
             Text(label)
-                .font(.subheadline)
-                .foregroundStyle(.white.opacity(0.76))
+                .font(DS.Font.body())
+                .foregroundStyle(DS.Color.textSecondary)
 
             Spacer()
 
@@ -326,21 +319,20 @@ private struct PrecisionLocationRow: View {
     var showsSettingsButton: Bool
 
     var body: some View {
-        HStack(alignment: .top, spacing: 14) {
+        HStack(alignment: .top, spacing: DS.Space.md) {
             Image(systemName: "location.viewfinder")
                 .font(.system(size: 16, weight: .semibold))
                 .foregroundStyle(color)
                 .frame(width: 36, height: 36)
-                .background(color.opacity(0.14), in: RoundedRectangle(cornerRadius: 10))
+                .background(color.opacity(0.14), in: RoundedRectangle(cornerRadius: DS.Radius.sm, style: .continuous))
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(title)
-                    .font(.subheadline)
-                    .fontWeight(.semibold)
-                    .foregroundStyle(.white)
+                    .font(DS.Font.body().weight(.semibold))
+                    .foregroundStyle(DS.Color.textPrimary)
                 Text(detail)
-                    .font(.caption)
-                    .foregroundStyle(.white.opacity(0.48))
+                    .font(DS.Font.caption())
+                    .foregroundStyle(DS.Color.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
 
                 if showsSettingsButton {
@@ -350,12 +342,11 @@ private struct PrecisionLocationRow: View {
                         }
                     } label: {
                         Text("Open iOS Settings")
-                            .font(.caption)
-                            .fontWeight(.bold)
+                            .font(DS.Font.caption().weight(.bold))
                     }
                     .buttonStyle(.plain)
-                    .foregroundStyle(.white.opacity(0.78))
-                    .padding(.top, 4)
+                    .foregroundStyle(DS.Color.accent)
+                    .padding(.top, DS.Space.xs)
                 }
             }
 
@@ -364,7 +355,7 @@ private struct PrecisionLocationRow: View {
             Circle()
                 .fill(color)
                 .frame(width: 7, height: 7)
-                .padding(.top, 14)
+                .padding(.top, DS.Space.md)
         }
     }
 }

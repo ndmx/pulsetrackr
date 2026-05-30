@@ -5,14 +5,11 @@ import UIKit
 // MARK: - Card panel modifier
 
 extension View {
+    /// Unified card surface. The `backgroundOpacity` argument is retained for
+    /// source compatibility with existing call sites but is no longer used — every
+    /// panel now resolves to the single `DS` surface so screens stay consistent.
     func cardPanel(backgroundOpacity: Double = 0.07) -> some View {
-        padding(16)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(.white.opacity(backgroundOpacity), in: RoundedRectangle(cornerRadius: 18))
-            .overlay(
-                RoundedRectangle(cornerRadius: 18)
-                    .stroke(.white.opacity(0.06), lineWidth: 1)
-            )
+        pulsePanel()
     }
 }
 
@@ -23,28 +20,27 @@ struct CategoryChip: View {
     var icon: String
     var color: Color
     var isSelected: Bool
+    /// Retained for source compatibility; both map and feed chips now share the
+    /// same adaptive surface, so the flag no longer changes styling.
     var darkBackground: Bool = false
     var action: () -> Void
 
     var body: some View {
         Button(action: action) {
             Label(title, systemImage: icon)
-                .font(.caption)
-                .fontWeight(.bold)
+                .font(DS.Font.label())
                 .lineLimit(1)
-                .padding(.horizontal, 11)
-                .padding(.vertical, 8)
+                .padding(.horizontal, DS.Space.md)
+                .padding(.vertical, DS.Space.sm)
                 .background(
-                    isSelected
-                        ? color.opacity(darkBackground ? 0.22 : 0.18)
-                        : (darkBackground ? Color.black.opacity(0.46) : Color.white.opacity(0.08)),
+                    isSelected ? color.opacity(0.16) : DS.Color.surfaceHigh,
                     in: Capsule()
                 )
-                .foregroundStyle(isSelected ? color : .white.opacity(darkBackground ? 0.82 : 0.76))
+                .foregroundStyle(isSelected ? color : DS.Color.textSecondary)
                 .overlay(
                     Capsule().stroke(
-                        isSelected ? color.opacity(0.55) : .white.opacity(0.10),
-                        lineWidth: darkBackground ? 1 : 0
+                        isSelected ? color.opacity(0.5) : DS.Color.hairline,
+                        lineWidth: 1
                     )
                 )
         }
@@ -63,30 +59,24 @@ struct LocationPromptCard: View {
     @Environment(\.openURL) private var openURL
 
     var body: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: DS.Space.md) {
             Image(systemName: "location.slash.fill")
                 .font(.title2)
-                .foregroundStyle(.white)
+                .foregroundStyle(DS.Color.textSecondary)
             Text("See incidents near you")
-                .font(.headline)
-                .foregroundStyle(.white)
+                .font(DS.Font.cardTitle())
+                .foregroundStyle(DS.Color.textPrimary)
             Text(message)
-                .font(.subheadline)
+                .font(DS.Font.body())
                 .multilineTextAlignment(.center)
-                .foregroundStyle(.white.opacity(0.7))
+                .foregroundStyle(DS.Color.textSecondary)
             Button(action: primaryAction) {
                 Text(buttonTitle)
-                    .font(.subheadline)
-                    .fontWeight(.semibold)
-                    .frame(maxWidth: .infinity, minHeight: 44)
-                    .background(.blue.opacity(0.22), in: RoundedRectangle(cornerRadius: 13))
-                    .overlay(RoundedRectangle(cornerRadius: 13).stroke(.blue.opacity(0.4), lineWidth: 1))
-                    .foregroundStyle(.blue)
             }
-            .buttonStyle(.plain)
-            .padding(.top, 2)
+            .buttonStyle(DSSecondaryButtonStyle())
+            .padding(.top, DS.Space.xs)
         }
-        .cardPanel()
+        .pulsePanel()
     }
 
     // LocalizedStringKey (not String) so Text(_:) localizes via the String Catalog.

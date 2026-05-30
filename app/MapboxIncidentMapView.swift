@@ -305,12 +305,12 @@ private struct MapboxIncidentPin: View {
             Circle()
                 .fill(.black.opacity(0.88))
                 .frame(width: 50, height: 50)
-                .overlay(Circle().stroke(incident.category.color, lineWidth: 3))
-                .shadow(color: incident.category.color.opacity(0.58), radius: 16)
+                .overlay(Circle().stroke(incident.severity.tint, lineWidth: 3))
+                .shadow(color: incident.severity.tint.opacity(0.58), radius: 16)
 
             Image(systemName: incident.subtype.icon)
                 .font(.system(size: iconSize, weight: .heavy))
-                .foregroundStyle(symbolColor)
+                .foregroundStyle(.white)
 
             Image(systemName: incident.confidence.icon)
                 .font(.system(size: 10, weight: .black))
@@ -323,10 +323,6 @@ private struct MapboxIncidentPin: View {
 
     private var iconSize: CGFloat {
         incident.subtype == .gunshots ? 22 : 24
-    }
-
-    private var symbolColor: Color {
-        incident.category == .security || incident.category == .fire ? incident.category.color : .white
     }
 }
 

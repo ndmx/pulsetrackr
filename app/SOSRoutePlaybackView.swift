@@ -5,62 +5,60 @@ struct SOSRoutePlaybackView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: DS.Space.lg) {
                 summary
                 timeline
                 queueState
             }
-            .padding(16)
-            .padding(.bottom, 24)
+            .padding(DS.Space.lg)
+            .padding(.bottom, DS.Space.xl)
         }
-        .background(.black)
+        .background(DS.Color.background)
         .navigationTitle("SOS route")
         .navigationBarTitleDisplayMode(.inline)
-        .preferredColorScheme(.dark)
     }
 
     private var summary: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .top, spacing: 12) {
+        VStack(alignment: .leading, spacing: DS.Space.md) {
+            HStack(alignment: .top, spacing: DS.Space.md) {
                 Image(systemName: "point.topleft.down.curvedto.point.bottomright.up")
                     .font(.title2)
                     .foregroundStyle(.cyan)
                     .frame(width: 44, height: 44)
-                    .background(.cyan.opacity(0.14), in: Circle())
+                    .background(Color.cyan.opacity(0.14), in: Circle())
 
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Recent direction of travel")
-                        .font(.headline)
-                        .fontWeight(.heavy)
-                        .foregroundStyle(.white)
+                        .font(DS.Font.cardTitle())
+                        .foregroundStyle(DS.Color.textPrimary)
                     Text(directionText)
-                        .font(.subheadline)
-                        .foregroundStyle(.white.opacity(0.62))
+                        .font(DS.Font.body())
+                        .foregroundStyle(DS.Color.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
 
-            HStack(spacing: 10) {
+            HStack(spacing: DS.Space.md) {
                 SOSRouteMetric(value: "\(sosStore.trail.count)", label: "points")
                 SOSRouteMetric(value: sosStore.lastKnownPoint?.timestamp.formatted(date: .omitted, time: .shortened) ?? "—", label: "last seen")
                 SOSRouteMetric(value: "\(sosStore.pendingRemoteEventCount)", label: "queued")
             }
         }
-        .cardPanel(backgroundOpacity: 0.08)
+        .pulsePanel()
     }
 
     @ViewBuilder
     private var timeline: some View {
         if sosStore.trail.isEmpty {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: DS.Space.md) {
                 SettingsSectionHeader(title: "Trail")
                 Text("No SOS trail has been captured yet.")
-                    .font(.subheadline)
-                    .foregroundStyle(.white.opacity(0.58))
+                    .font(DS.Font.body())
+                    .foregroundStyle(DS.Color.textSecondary)
             }
-            .cardPanel(backgroundOpacity: 0.07)
+            .pulsePanel()
         } else {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: DS.Space.md) {
                 SettingsSectionHeader(title: "Trail")
 
                 ForEach(Array(sosStore.trail.suffix(12).enumerated()), id: \.element.id) { index, point in
@@ -70,27 +68,26 @@ struct SOSRoutePlaybackView: View {
                     )
                 }
             }
-            .cardPanel(backgroundOpacity: 0.07)
+            .pulsePanel()
         }
     }
 
     private var queueState: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: DS.Space.md) {
             SettingsSectionHeader(title: "Upload")
 
-            HStack(spacing: 10) {
+            HStack(spacing: DS.Space.md) {
                 Image(systemName: uploadIcon)
                     .foregroundStyle(uploadColor)
                     .frame(width: 28)
 
                 VStack(alignment: .leading, spacing: 3) {
                     Text(sosStore.uploadStatusText)
-                        .font(.subheadline)
-                        .fontWeight(.bold)
-                        .foregroundStyle(.white)
+                        .font(DS.Font.body().weight(.bold))
+                        .foregroundStyle(DS.Color.textPrimary)
                     Text("Failed updates stay in the local queue until retry succeeds.")
-                        .font(.caption)
-                        .foregroundStyle(.white.opacity(0.52))
+                        .font(DS.Font.caption())
+                        .foregroundStyle(DS.Color.textSecondary)
                 }
             }
 
@@ -99,14 +96,11 @@ struct SOSRoutePlaybackView: View {
                     sosStore.retryQueuedEvents()
                 } label: {
                     Label("Retry now", systemImage: "arrow.clockwise")
-                        .font(.subheadline)
-                        .fontWeight(.bold)
-                        .frame(maxWidth: .infinity)
                 }
-                .buttonStyle(SOSRouteButtonStyle())
+                .buttonStyle(DSPrimaryButtonStyle(tint: IncidentSeverity.high.tint))
             }
         }
-        .cardPanel(backgroundOpacity: 0.07)
+        .pulsePanel()
     }
 
     private var directionText: String {
@@ -133,11 +127,11 @@ struct SOSRoutePlaybackView: View {
 
     private var uploadColor: Color {
         switch sosStore.deliveryState {
-        case .delivered: .green
-        case .syncing: .yellow
-        case .failed: .orange
+        case .delivered: DS.Color.positive
+        case .syncing: IncidentSeverity.medium.tint
+        case .failed: IncidentSeverity.high.tint
         case .localOnly: .cyan
-        case .ready: .white.opacity(0.78)
+        case .ready: DS.Color.textSecondary
         }
     }
 }
@@ -147,34 +141,32 @@ private struct SOSRoutePointRow: View {
     var isNewest: Bool
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: DS.Space.md) {
             ZStack {
                 Circle()
-                    .fill(isNewest ? Color.red.opacity(0.20) : Color.cyan.opacity(0.14))
+                    .fill(isNewest ? DS.Color.accent.opacity(0.20) : Color.cyan.opacity(0.14))
                     .frame(width: 38, height: 38)
                 Image(systemName: point.course == nil ? "location.fill" : "location.north.fill")
                     .font(.system(size: 14, weight: .heavy))
-                    .foregroundStyle(isNewest ? .red : .cyan)
+                    .foregroundStyle(isNewest ? DS.Color.accent : .cyan)
                     .rotationEffect(.degrees(point.course ?? 0))
             }
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(isNewest ? "Last known position" : "Trail point")
-                    .font(.subheadline)
-                    .fontWeight(.bold)
-                    .foregroundStyle(.white)
+                    .font(DS.Font.body().weight(.bold))
+                    .foregroundStyle(DS.Color.textPrimary)
                 Text("\(point.coordinate.latitude.formatted(.number.precision(.fractionLength(5)))), \(point.coordinate.longitude.formatted(.number.precision(.fractionLength(5))))")
-                    .font(.caption)
-                    .foregroundStyle(.white.opacity(0.52))
+                    .font(DS.Font.caption())
+                    .foregroundStyle(DS.Color.textSecondary)
                     .lineLimit(1)
             }
 
             Spacer()
 
             Text(point.timestamp, style: .time)
-                .font(.caption)
-                .fontWeight(.semibold)
-                .foregroundStyle(.white.opacity(0.58))
+                .font(DS.Font.caption().weight(.semibold))
+                .foregroundStyle(DS.Color.textSecondary)
         }
     }
 }
@@ -186,29 +178,17 @@ private struct SOSRouteMetric: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(value)
-                .font(.headline)
-                .fontWeight(.heavy)
-                .foregroundStyle(.white)
+                .font(.system(.headline, design: .rounded, weight: .heavy))
+                .foregroundStyle(DS.Color.textPrimary)
                 .lineLimit(1)
             Text(label)
-                .font(.caption2)
-                .fontWeight(.bold)
+                .font(.caption2.weight(.bold))
                 .textCase(.uppercase)
-                .foregroundStyle(.white.opacity(0.48))
+                .foregroundStyle(DS.Color.textTertiary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(10)
-        .background(.black.opacity(0.26), in: RoundedRectangle(cornerRadius: 12))
-    }
-}
-
-private struct SOSRouteButtonStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .foregroundStyle(.black)
-            .padding(.vertical, 11)
-            .background(Color.yellow.opacity(configuration.isPressed ? 0.72 : 0.92), in: Capsule())
-            .scaleEffect(configuration.isPressed ? 0.98 : 1)
+        .padding(DS.Space.md)
+        .background(DS.Color.surfaceHigh, in: RoundedRectangle(cornerRadius: DS.Radius.sm, style: .continuous))
     }
 }
 

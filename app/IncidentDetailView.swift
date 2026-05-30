@@ -3,6 +3,8 @@ import SwiftUI
 struct IncidentDetailView: View {
     @EnvironmentObject private var incidentStore: IncidentStore
     @Environment(\.openURL) private var openURL
+    @Environment(\.dismiss) private var dismiss
+    @State private var showsConcernDialog = false
     var incident: Incident
 
     private var liveIncident: Incident {
@@ -11,164 +13,188 @@ struct IncidentDetailView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: DS.Space.lg) {
                 header
                 communityActions
+                safetyActions
                 if liveIncident.hasLocation {
                     directionsSection
                 }
                 detailCard
                 updatesSection
             }
-            .padding(16)
-            .padding(.bottom, 24)
+            .padding(DS.Space.lg)
+            .padding(.bottom, DS.Space.xl)
         }
-        .background(.black)
+        .background(DS.Color.background)
         .navigationTitle(liveIncident.subtype.label)
         .navigationBarTitleDisplayMode(.inline)
-        .preferredColorScheme(.dark)
-        .toolbarColorScheme(.dark, for: .navigationBar)
+        .confirmationDialog(
+            "Why are you reporting this?",
+            isPresented: $showsConcernDialog,
+            titleVisibility: .visible
+        ) {
+            ForEach(IncidentConcernReason.allCases) { reason in
+                Button(reason.label) {
+                    incidentStore.recordConcern(reason, for: liveIncident)
+                    dismiss()
+                }
+            }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("PulseTrackr hides this report on your device and sends a private moderation signal for review.")
+        }
     }
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Image(systemName: liveIncident.subtype.icon)
-                .font(.title)
-                .foregroundStyle(.white)
-                .frame(width: 62, height: 62)
-                .background(liveIncident.category.color, in: Circle())
-                .shadow(color: liveIncident.category.color.opacity(0.55), radius: 14)
+        VStack(alignment: .leading, spacing: DS.Space.lg) {
+            HStack(spacing: DS.Space.md) {
+                Image(systemName: liveIncident.subtype.icon)
+                    .font(.title2)
+                    .foregroundStyle(liveIncident.category.color)
+                    .frame(width: 56, height: 56)
+                    .background(liveIncident.category.color.opacity(0.14), in: Circle())
+                    .overlay(Circle().stroke(liveIncident.category.color.opacity(0.3), lineWidth: 1))
 
-            VStack(alignment: .leading, spacing: 10) {
+                DSSeverityBadge(severity: liveIncident.severity)
+
+                Spacer()
+            }
+
+            VStack(alignment: .leading, spacing: DS.Space.sm) {
                 Label(liveIncident.confidence.rawValue, systemImage: liveIncident.confidence.icon)
-                    .font(.caption)
-                    .fontWeight(.heavy)
+                    .font(.caption.weight(.bold))
                     .textCase(.uppercase)
                     .foregroundStyle(liveIncident.confidence.color)
-                    .padding(.horizontal, 9)
+                    .padding(.horizontal, DS.Space.sm)
                     .padding(.vertical, 5)
                     .background(liveIncident.confidence.color.opacity(0.13), in: Capsule())
 
                 Text(liveIncident.title)
-                    .font(.title2)
-                    .fontWeight(.bold)
-                    .foregroundStyle(.white)
+                    .font(.system(.title2, design: .rounded, weight: .bold))
+                    .foregroundStyle(DS.Color.textPrimary)
                     .fixedSize(horizontal: false, vertical: true)
 
                 Text(liveIncident.summary)
-                    .font(.subheadline)
-                    .foregroundStyle(.white.opacity(0.64))
+                    .font(DS.Font.body())
+                    .foregroundStyle(DS.Color.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
 
                 Label(liveIncident.alertTone, systemImage: "bell.and.waves.left.and.right.fill")
-                    .font(.caption)
-                    .fontWeight(.semibold)
-                    .foregroundStyle(liveIncident.isHighRisk ? .red : .white.opacity(0.52))
+                    .font(DS.Font.label())
+                    .foregroundStyle(liveIncident.isHighRisk ? DS.Color.accent : DS.Color.textTertiary)
             }
         }
-        .cardPanel()
+        .pulsePanel()
     }
 
     private var communityActions: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: DS.Space.md) {
             Text("What do you see?")
-                .font(.headline)
-                .foregroundStyle(.white)
+                .font(DS.Font.cardTitle())
+                .foregroundStyle(DS.Color.textPrimary)
 
-            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
+            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: DS.Space.md) {
                 ForEach(CommunitySignal.allCases) { signal in
                     Button {
                         incidentStore.record(signal, for: liveIncident)
                     } label: {
-                        HStack(spacing: 8) {
+                        HStack(spacing: DS.Space.sm) {
                             Image(systemName: signal.icon)
                                 .font(.subheadline)
                             Text(signal.label)
-                                .font(.subheadline)
-                                .fontWeight(.semibold)
+                                .font(DS.Font.body().weight(.semibold))
                         }
                         .frame(maxWidth: .infinity, minHeight: 46)
-                        .background(signal.color.opacity(0.14), in: RoundedRectangle(cornerRadius: 13))
-                        .overlay(RoundedRectangle(cornerRadius: 13).stroke(signal.color.opacity(0.30), lineWidth: 1))
+                        .background(signal.color.opacity(0.14), in: RoundedRectangle(cornerRadius: DS.Radius.md, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: DS.Radius.md, style: .continuous).stroke(signal.color.opacity(0.30), lineWidth: 1))
                         .foregroundStyle(signal.color)
                     }
                     .buttonStyle(.plain)
                 }
             }
         }
-        .cardPanel()
+        .pulsePanel()
+    }
+
+    private var safetyActions: some View {
+        VStack(alignment: .leading, spacing: DS.Space.md) {
+            Text("Report concern")
+                .font(DS.Font.cardTitle())
+                .foregroundStyle(DS.Color.textPrimary)
+
+            Text("Use this for false, abusive, private, or dangerous user-generated content. This hides the report on your device.")
+                .font(DS.Font.caption())
+                .foregroundStyle(DS.Color.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Button {
+                showsConcernDialog = true
+            } label: {
+                Label("Report or hide this", systemImage: "flag")
+            }
+            .buttonStyle(DSSecondaryButtonStyle())
+        }
+        .pulsePanel()
     }
 
     private var directionsSection: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: DS.Space.md) {
             Text("Get directions")
-                .font(.headline)
-                .foregroundStyle(.white)
+                .font(DS.Font.cardTitle())
+                .foregroundStyle(DS.Color.textPrimary)
 
-            HStack(spacing: 10) {
+            HStack(spacing: DS.Space.md) {
                 Button {
                     openURL(liveIncident.googleMapsAreaURL)
                 } label: {
-                    Label("View area", systemImage: "map.fill")
-                        .font(.subheadline)
-                        .fontWeight(.semibold)
-                        .frame(maxWidth: .infinity, minHeight: 46)
-                        .background(.white.opacity(0.09), in: RoundedRectangle(cornerRadius: 13))
-                        .overlay(RoundedRectangle(cornerRadius: 13).stroke(.white.opacity(0.08), lineWidth: 1))
-                        .foregroundStyle(.white)
+                    Label("View area", systemImage: "map")
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(DSSecondaryButtonStyle())
 
                 Button {
                     openURL(liveIncident.googleMapsDirectionsURL)
                 } label: {
-                    Label("Navigate", systemImage: "arrow.triangle.turn.up.right.diamond.fill")
-                        .font(.subheadline)
-                        .fontWeight(.semibold)
-                        .frame(maxWidth: .infinity, minHeight: 46)
-                        .background(.blue.opacity(0.18), in: RoundedRectangle(cornerRadius: 13))
-                        .overlay(RoundedRectangle(cornerRadius: 13).stroke(.blue.opacity(0.34), lineWidth: 1))
-                        .foregroundStyle(.blue)
+                    Label("Navigate", systemImage: "arrow.triangle.turn.up.right.diamond")
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(DSSecondaryButtonStyle())
             }
 
             Text("Opens Google Maps to the approximate incident area. Your location is never included.")
-                .font(.caption)
-                .foregroundStyle(.white.opacity(0.40))
+                .font(DS.Font.caption())
+                .foregroundStyle(DS.Color.textTertiary)
         }
-        .cardPanel()
+        .pulsePanel()
     }
 
     private var detailCard: some View {
         VStack(spacing: 0) {
             ForEach(Array(detailRows.enumerated()), id: \.offset) { index, row in
-                HStack(spacing: 12) {
+                HStack(spacing: DS.Space.md) {
                     Image(systemName: row.icon)
                         .font(.caption)
-                        .foregroundStyle(.white.opacity(0.42))
+                        .foregroundStyle(DS.Color.textTertiary)
                         .frame(width: 20)
 
                     Text(row.label)
-                        .font(.subheadline)
-                        .foregroundStyle(.white.opacity(0.54))
+                        .font(DS.Font.body())
+                        .foregroundStyle(DS.Color.textSecondary)
 
                     Spacer()
 
                     Text(row.value)
-                        .font(.subheadline)
-                        .fontWeight(.semibold)
-                        .foregroundStyle(.white)
+                        .font(DS.Font.body().weight(.semibold))
+                        .foregroundStyle(DS.Color.textPrimary)
                         .multilineTextAlignment(.trailing)
                 }
-                .padding(.vertical, 11)
+                .padding(.vertical, DS.Space.md)
 
                 if index < detailRows.count - 1 {
-                    Divider().background(.white.opacity(0.07))
+                    Divider().overlay(DS.Color.hairline)
                 }
             }
         }
-        .cardPanel()
+        .pulsePanel()
     }
 
     private var detailRows: [(label: String, value: String, icon: String)] {
@@ -183,34 +209,34 @@ struct IncidentDetailView: View {
     }
 
     private var updatesSection: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: DS.Space.md) {
             Text("Live updates")
-                .font(.headline)
-                .foregroundStyle(.white)
+                .font(DS.Font.cardTitle())
+                .foregroundStyle(DS.Color.textPrimary)
 
             if liveIncident.updates.isEmpty {
                 Text("No updates yet. Community signals will appear here as they come in.")
-                    .font(.subheadline)
-                    .foregroundStyle(.white.opacity(0.44))
+                    .font(DS.Font.body())
+                    .foregroundStyle(DS.Color.textTertiary)
                     .frame(maxWidth: .infinity, alignment: .leading)
             } else {
                 ForEach(liveIncident.updates) { update in
                     VStack(alignment: .leading, spacing: 5) {
                         Text(update.message)
-                            .font(.subheadline)
-                            .foregroundStyle(.white.opacity(0.86))
+                            .font(DS.Font.body())
+                            .foregroundStyle(DS.Color.textPrimary)
                         Text(update.timestamp, style: .relative)
-                            .font(.caption)
-                            .foregroundStyle(.white.opacity(0.42))
+                            .font(DS.Font.caption())
+                            .foregroundStyle(DS.Color.textTertiary)
                     }
-                    .padding(14)
+                    .padding(DS.Space.md)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 13))
-                    .overlay(RoundedRectangle(cornerRadius: 13).stroke(.white.opacity(0.06), lineWidth: 1))
+                    .background(DS.Color.surfaceHigh, in: RoundedRectangle(cornerRadius: DS.Radius.md, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: DS.Radius.md, style: .continuous).stroke(DS.Color.hairline, lineWidth: 1))
                 }
             }
         }
-        .cardPanel()
+        .pulsePanel()
     }
 }
 

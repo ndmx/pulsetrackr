@@ -17,6 +17,8 @@ final class IncidentStore: ObservableObject {
     // Local mutations keep indices stable; remote snapshots rebuild the lookup.
     private var lookup: [UUID: Int] = [:]
     private let remoteStore: SafetyIncidentRemoteStore?
+    private let hiddenIncidentIDsKey = "hiddenIncidentIDs"
+    private var hiddenIncidentIDs: Set<UUID>
 
     // The region currently being observed, so we only re-subscribe when the user
     // moves meaningfully or changes their radius (avoids listener thrash).
@@ -26,6 +28,11 @@ final class IncidentStore: ObservableObject {
 
     init(remoteStore: SafetyIncidentRemoteStore? = SafetyIncidentRemoteStore.makeIfConfigured()) {
         self.remoteStore = remoteStore
+        hiddenIncidentIDs = Set(
+            UserDefaults.standard
+                .stringArray(forKey: hiddenIncidentIDsKey)?
+                .compactMap(UUID.init(uuidString:)) ?? []
+        )
         rebuildLookup()
         refreshActiveIncidents()
     }
@@ -54,7 +61,7 @@ final class IncidentStore: ObservableObject {
 
     private func refreshActiveIncidents() {
         activeIncidents = incidents
-            .filter { $0.status != .resolved }
+            .filter { $0.status != .resolved && hiddenIncidentIDs.contains($0.id) == false }
             .sorted { $0.reportedAt > $1.reportedAt }
     }
 
@@ -203,7 +210,10 @@ final class IncidentStore: ObservableObject {
             }
         case .roadBlocked:
             incidents[index].blockedReports += 1
-            if incidents[index].category == .traffic || incidents[index].severity == .low {
+            // A road-blocked report should only ever raise the floor to Medium,
+            // never weaken an existing severity. Previously the `category == .traffic`
+            // clause forced High/Urgent traffic incidents back down to Medium.
+            if incidents[index].severity == .low {
                 incidents[index].severity = .medium
             }
         case .cleared:
@@ -222,17 +232,13 @@ final class IncidentStore: ObservableObject {
         refreshActiveIncidents()
 
         if let remoteStore {
-            let incidentID  = incident.id
-            let newStatus   = incidents[index].status
-            let newSeverity = incidents[index].severity
+            let incidentID = incident.id
             Task { [weak self] in
                 do {
                     try await Self.retrying {
                         try await remoteStore.recordSignal(
                             signal,
-                            forIncidentWithID: incidentID,
-                            newStatus: newStatus,
-                            newSeverity: newSeverity
+                            forIncidentWithID: incidentID
                         )
                     }
                     self?.lastSyncError = nil
@@ -251,6 +257,31 @@ final class IncidentStore: ObservableObject {
             IncidentUpdate(message: "Marked resolved by the community.", timestamp: Date()),
             at: 0
         )
+        refreshActiveIncidents()
+    }
+
+    func recordConcern(_ reason: IncidentConcernReason, for incident: Incident) {
+        hideIncident(incident)
+
+        if let remoteStore {
+            let incidentID = incident.id
+            Task { [weak self] in
+                do {
+                    try await Self.retrying {
+                        try await remoteStore.recordConcern(reason, forIncidentWithID: incidentID)
+                    }
+                    self?.lastSyncError = nil
+                } catch {
+                    self?.lastSyncError = "We hid this report, but couldn't send the review request. Check your connection and try again."
+                }
+            }
+        }
+    }
+
+    func hideIncident(_ incident: Incident) {
+        objectWillChange.send()
+        hiddenIncidentIDs.insert(incident.id)
+        UserDefaults.standard.set(hiddenIncidentIDs.map(\.uuidString), forKey: hiddenIncidentIDsKey)
         refreshActiveIncidents()
     }
 

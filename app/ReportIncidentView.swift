@@ -86,23 +86,20 @@ struct ReportIncidentView: View {
                     submit()
                 } label: {
                     Label("Report now", systemImage: "bell.and.waves.left.and.right.fill")
-                        .font(.headline)
-                        .frame(maxWidth: .infinity, minHeight: 54)
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(.red)
+                .buttonStyle(DSPrimaryButtonStyle())
                 .disabled(!canSubmit)
+                .opacity(canSubmit ? 1 : 0.5)
             }
-            .padding(16)
+            .padding(DS.Space.lg)
             .contentShape(Rectangle())
             .onTapGesture(perform: dismissKeyboard)
         }
-        .background(.black)
+        .background(DS.Color.background)
         .scrollDismissesKeyboard(.interactively)
         .background(KeyboardDismissInstaller(onDismiss: dismissKeyboard))
         .navigationTitle("Report")
         .navigationBarTitleDisplayMode(.inline)
-        .preferredColorScheme(.dark)
         .onAppear {
             locationManager.requestCurrentLocation()
         }
@@ -341,35 +338,24 @@ private struct ReportHero: View {
     var hasPrivateCoordinate: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 5) {
-                    Text("Report what is happening")
-                        .font(.title2)
-                        .fontWeight(.heavy)
-                    Text("Show it, say it, or type it. Classification happens after.")
-                        .font(.subheadline)
-                        .foregroundStyle(.white.opacity(0.64))
-                }
+        VStack(alignment: .leading, spacing: DS.Space.md) {
+            Text("Report what is happening")
+                .font(.system(.title2, design: .rounded, weight: .bold))
+                .foregroundStyle(DS.Color.textPrimary)
+            Text("Show it, say it, or type it. Classification happens after.")
+                .font(DS.Font.body())
+                .foregroundStyle(DS.Color.textSecondary)
 
-                Spacer()
-
-                Image(systemName: "plus.message.fill")
-                    .font(.headline)
-                    .foregroundStyle(.white)
-                    .frame(width: 44, height: 44)
-                    .background(.red, in: Circle())
-            }
-
-            Label(locationStatus, systemImage: hasPrivateCoordinate ? "location.circle.fill" : "location.slash.fill")
-                .font(.caption)
-                .fontWeight(.heavy)
-                .foregroundStyle(hasPrivateCoordinate ? .green : .orange)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 7)
-                .background((hasPrivateCoordinate ? Color.green : Color.orange).opacity(0.14), in: Capsule())
+            let ok = hasPrivateCoordinate
+            Label(locationStatus, systemImage: ok ? "location.fill" : "location.slash.fill")
+                .font(DS.Font.label())
+                .foregroundStyle(ok ? DS.Color.positive : DS.Color.accent)
+                .padding(.horizontal, DS.Space.md)
+                .padding(.vertical, DS.Space.sm)
+                .background((ok ? DS.Color.positive : DS.Color.accent).opacity(0.12), in: Capsule())
+                .overlay(Capsule().stroke((ok ? DS.Color.positive : DS.Color.accent).opacity(0.3), lineWidth: 1))
         }
-        .cardPanel(backgroundOpacity: 0.09)
+        .pulsePanel()
     }
 }
 
@@ -389,61 +375,58 @@ private struct ReportComposer: View {
     // One form: describe it, say whether it's ongoing, and optionally add a photo
     // and/or a voice note — all submitted together.
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            section(title: "Describe what you see", icon: "text.bubble.fill", color: .green) {
+        VStack(alignment: .leading, spacing: DS.Space.xl) {
+            section(title: "Describe what you see", icon: "text.alignleft") {
                 textFields
             }
 
-            Divider().background(.white.opacity(0.07))
+            Divider().overlay(DS.Color.hairline)
 
-            section(title: "Is this still happening?", icon: "dot.radiowaves.left.and.right", color: .red) {
+            section(title: "Is this still happening?", icon: "dot.radiowaves.left.and.right") {
                 statusControls
             }
 
-            Divider().background(.white.opacity(0.07))
+            Divider().overlay(DS.Color.hairline)
 
-            section(title: "Add a photo (optional)", icon: "camera.fill", color: .purple) {
+            section(title: "Add a photo", icon: "camera", optional: true) {
                 photoControls
             }
 
-            Divider().background(.white.opacity(0.07))
+            Divider().overlay(DS.Color.hairline)
 
-            section(title: "Add a voice note (optional)", icon: "mic.fill", color: .blue) {
+            section(title: "Add a voice note", icon: "mic", optional: true) {
                 voiceControls
             }
         }
-        .cardPanel(backgroundOpacity: 0.09)
+        .pulsePanel()
     }
 
     @ViewBuilder
     private func section<Content: View>(
-        title: String,
+        title: LocalizedStringKey,
         icon: String,
-        color: Color,
+        optional: Bool = false,
         @ViewBuilder content: () -> Content
     ) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Label(title, systemImage: icon)
-                .font(.subheadline)
-                .fontWeight(.bold)
-                .foregroundStyle(color)
+        VStack(alignment: .leading, spacing: DS.Space.md) {
+            DSSectionHeader(title: title, systemImage: icon, optional: optional)
             content()
         }
     }
 
     private var statusControls: some View {
-        HStack(spacing: 10) {
-            StatusPill(title: "Happening now", icon: "dot.radiowaves.left.and.right", color: .red, isSelected: isOngoing) {
+        HStack(spacing: DS.Space.md) {
+            StatusPill(title: "Happening now", icon: "dot.radiowaves.left.and.right", color: DS.Color.accent, isSelected: isOngoing) {
                 isOngoing = true
             }
-            StatusPill(title: "Already happened", icon: "clock.arrow.circlepath", color: .orange, isSelected: !isOngoing) {
+            StatusPill(title: "Already happened", icon: "clock.arrow.circlepath", color: DS.Color.textSecondary, isSelected: !isOngoing) {
                 isOngoing = false
             }
         }
     }
 
     private var textFields: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: DS.Space.md) {
             DarkTextField(title: "Short title", text: $title)
                 .focused(focusedField, equals: .title)
                 .submitLabel(.next)
@@ -456,21 +439,22 @@ private struct ReportComposer: View {
                 .onSubmit {
                     focusedField.wrappedValue = .summary
                 }
-            TextEditor(text: $summary)
-                .focused(focusedField, equals: .summary)
-                .frame(minHeight: 132)
-                .padding(8)
-                .scrollContentBackground(.hidden)
-                .background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
-                .overlay(alignment: .topLeading) {
-                    if summary.isEmpty {
-                        Text("What is happening? Use your own words.")
-                            .foregroundStyle(.white.opacity(0.34))
-                            .padding(.top, 17)
-                            .padding(.leading, 14)
-                            .allowsHitTesting(false)
+            DSFieldContainer {
+                TextEditor(text: $summary)
+                    .focused(focusedField, equals: .summary)
+                    .frame(minHeight: 120)
+                    .scrollContentBackground(.hidden)
+                    .foregroundStyle(DS.Color.textPrimary)
+                    .overlay(alignment: .topLeading) {
+                        if summary.isEmpty {
+                            Text("What is happening? Use your own words.")
+                                .font(DS.Font.body())
+                                .foregroundStyle(DS.Color.textTertiary)
+                                .padding(.top, DS.Space.sm)
+                                .allowsHitTesting(false)
+                        }
                     }
-                }
+            }
         }
     }
 
@@ -513,7 +497,7 @@ private struct ReportComposer: View {
                     title: selectedPhotoData == nil ? "Choose photo" : "Change photo",
                     subtitle: isLoadingPhoto ? "Loading selected image..." : "Adds a photo evidence note to this report",
                     icon: selectedPhotoData == nil ? "photo.badge.plus" : "checkmark.circle.fill",
-                    color: .purple
+                    color: selectedPhotoData == nil ? DS.Color.textSecondary : DS.Color.positive
                 )
             }
             .buttonStyle(.plain)
@@ -526,7 +510,7 @@ private struct ReportComposer: View {
                 title: voiceRecorder.isRecording ? "Stop recording" : (voiceRecorder.recordingURL == nil ? "Record voice note" : "Record again"),
                 subtitle: voiceRecorder.statusText,
                 icon: voiceRecorder.isRecording ? "stop.circle.fill" : "mic.circle.fill",
-                color: .blue
+                color: voiceRecorder.isRecording ? DS.Color.accent : DS.Color.textSecondary
             ) {
                 if voiceRecorder.isRecording {
                     voiceRecorder.stop()
@@ -561,7 +545,7 @@ private struct ReportComposer: View {
 }
 
 private struct StatusPill: View {
-    var title: String
+    var title: LocalizedStringKey
     var icon: String
     var color: Color
     var isSelected: Bool
@@ -569,34 +553,34 @@ private struct StatusPill: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 8) {
+            HStack(spacing: DS.Space.sm) {
                 Image(systemName: icon)
                     .font(.subheadline)
                 Text(title)
-                    .font(.subheadline)
-                    .fontWeight(.semibold)
+                    .font(DS.Font.body().weight(.semibold))
             }
             .frame(maxWidth: .infinity, minHeight: 46)
-            .background(isSelected ? color.opacity(0.22) : .white.opacity(0.07), in: RoundedRectangle(cornerRadius: 13))
+            .background(isSelected ? color.opacity(0.16) : DS.Color.surfaceHigh, in: RoundedRectangle(cornerRadius: DS.Radius.md, style: .continuous))
             .overlay(
-                RoundedRectangle(cornerRadius: 13)
-                    .stroke(isSelected ? color.opacity(0.7) : .white.opacity(0.10), lineWidth: 1)
+                RoundedRectangle(cornerRadius: DS.Radius.md, style: .continuous)
+                    .stroke(isSelected ? color.opacity(0.6) : DS.Color.hairline, lineWidth: 1)
             )
-            .foregroundStyle(isSelected ? color : .white.opacity(0.7))
+            .foregroundStyle(isSelected ? color : DS.Color.textSecondary)
         }
         .buttonStyle(.plain)
     }
 }
 
 private struct DarkTextField: View {
-    var title: String
+    var title: LocalizedStringKey
     @Binding var text: String
 
     var body: some View {
-        TextField(title, text: $text)
-            .textFieldStyle(.plain)
-            .padding(12)
-            .background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
+        DSFieldContainer {
+            TextField(title, text: $text)
+                .textFieldStyle(.plain)
+                .foregroundStyle(DS.Color.textPrimary)
+        }
     }
 }
 
@@ -622,29 +606,33 @@ private struct EvidenceAttachLabel: View {
     var color: Color
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: DS.Space.md) {
             Image(systemName: icon)
-                .font(.title2)
+                .font(.title3)
                 .foregroundStyle(color)
-                .frame(width: 46, height: 46)
-                .background(color.opacity(0.16), in: Circle())
+                .frame(width: 44, height: 44)
+                .background(color.opacity(0.14), in: Circle())
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(title)
-                    .font(.headline)
-                    .foregroundStyle(.white)
+                    .font(DS.Font.cardTitle())
+                    .foregroundStyle(DS.Color.textPrimary)
                 if let subtitle {
                     Text(subtitle)
-                        .font(.caption)
-                        .foregroundStyle(.white.opacity(0.58))
+                        .font(DS.Font.caption())
+                        .foregroundStyle(DS.Color.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
 
             Spacer(minLength: 0)
         }
-        .padding(14)
-        .background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 14))
+        .padding(DS.Space.md)
+        .background(DS.Color.surfaceHigh, in: RoundedRectangle(cornerRadius: DS.Radius.md, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: DS.Radius.md, style: .continuous)
+                .stroke(DS.Color.hairline, lineWidth: DS.Stroke.hairline)
+        )
     }
 }
 
@@ -656,39 +644,39 @@ private struct SuggestionPanel: View {
     var useSuggestion: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 13) {
-            HStack(spacing: 12) {
+        VStack(alignment: .leading, spacing: DS.Space.md) {
+            HStack(spacing: DS.Space.md) {
                 Image(systemName: subtype.icon)
                     .font(.title3)
-                    .foregroundStyle(.white)
+                    .foregroundStyle(category.color)
                     .frame(width: 46, height: 46)
-                    .background(category.color, in: Circle())
+                    .background(category.color.opacity(0.14), in: Circle())
+                    .overlay(Circle().stroke(category.color.opacity(0.3), lineWidth: 1))
 
                 VStack(alignment: .leading, spacing: 4) {
                     Text(subtype.label)
-                        .font(.headline)
-                    Text("\(category.label) • \(severity.rawValue)")
-                        .font(.caption)
-                        .fontWeight(.bold)
-                        .foregroundStyle(.white.opacity(0.62))
+                        .font(DS.Font.cardTitle())
+                        .foregroundStyle(DS.Color.textPrimary)
+                    Text(category.label)
+                        .font(DS.Font.label())
+                        .foregroundStyle(DS.Color.textSecondary)
                 }
 
                 Spacer()
+
+                DSSeverityBadge(severity: severity)
             }
 
             Text(classification.reason)
-                .font(.caption)
-                .foregroundStyle(.white.opacity(0.58))
+                .font(DS.Font.caption())
+                .foregroundStyle(DS.Color.textSecondary)
 
             Button(action: useSuggestion) {
                 Label("Use suggestion", systemImage: "wand.and.stars")
-                    .font(.subheadline)
-                    .fontWeight(.bold)
-                    .frame(maxWidth: .infinity, minHeight: 42)
             }
-            .buttonStyle(.bordered)
+            .buttonStyle(DSSecondaryButtonStyle())
         }
-        .cardPanel(backgroundOpacity: 0.09)
+        .pulsePanel()
     }
 }
 
@@ -696,15 +684,15 @@ private struct PrivacyPanel: View {
     var locationStatus: String
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Label(locationStatus, systemImage: "location.circle.fill")
-                .font(.subheadline)
-                .fontWeight(.bold)
+        VStack(alignment: .leading, spacing: DS.Space.sm) {
+            Label(locationStatus, systemImage: "lock.shield")
+                .font(DS.Font.body().weight(.semibold))
+                .foregroundStyle(DS.Color.textPrimary)
             Text("Exact reporter location stays private to the app. The public map shows an approximate incident area.")
-                .font(.caption)
-                .foregroundStyle(.white.opacity(0.58))
+                .font(DS.Font.caption())
+                .foregroundStyle(DS.Color.textSecondary)
         }
-        .cardPanel(backgroundOpacity: 0.09)
+        .pulsePanel()
     }
 }
 

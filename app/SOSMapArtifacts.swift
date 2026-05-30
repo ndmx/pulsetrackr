@@ -6,17 +6,17 @@ struct IncidentDangerHalo: View {
     var body: some View {
         ZStack {
             Circle()
-                .fill(incident.category.color.opacity(fillOpacity))
+                .fill(incident.severity.tint.opacity(fillOpacity))
                 .frame(width: outerDiameter, height: outerDiameter)
                 .blur(radius: blurRadius)
 
             Circle()
-                .stroke(incident.category.color.opacity(0.30), lineWidth: 1.5)
+                .stroke(incident.severity.tint.opacity(0.30), lineWidth: 1.5)
                 .frame(width: outerDiameter * 0.72, height: outerDiameter * 0.72)
 
             if incident.isHighRisk {
                 Circle()
-                    .stroke(incident.category.color.opacity(0.18), lineWidth: 1)
+                    .stroke(incident.severity.tint.opacity(0.18), lineWidth: 1)
                     .frame(width: outerDiameter, height: outerDiameter)
             }
         }

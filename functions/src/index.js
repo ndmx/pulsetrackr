@@ -44,15 +44,58 @@ const callableOptions = {
   ],
 };
 
+// Per-user throttles for the public community feed. Reports and signals are the
+// only client-writable surfaces, so they are the primary abuse/spam vectors.
+const SUBMISSION_RATE_LIMIT = Object.freeze({
+  cooldownSeconds: 15,
+  windowSeconds: 60 * 60,
+  windowLimit: 20,
+  cooldownMessage: 'Please wait a few seconds before submitting another report',
+  windowMessage: 'Too many reports submitted in the last hour. Try again later.',
+});
+const SIGNAL_RATE_LIMIT = Object.freeze({
+  cooldownSeconds: 2,
+  windowSeconds: 60 * 60,
+  windowLimit: 120,
+  cooldownMessage: 'Please wait before sending another update',
+  windowMessage: 'Too many community updates in the last hour. Try again later.',
+});
+const CONCERN_RATE_LIMIT = Object.freeze({
+  cooldownSeconds: 10,
+  windowSeconds: 60 * 60,
+  windowLimit: 30,
+  cooldownMessage: 'Please wait before reporting another concern',
+  windowMessage: 'Too many concerns submitted in the last hour. Try again later.',
+});
+
+// Wire signal -> public counter field. Keys match CommunitySignal.rawValue (iOS).
+const SIGNAL_COUNTER_FIELD = Object.freeze({
+  seen: 'confirmations',
+  notSeen: 'disputes',
+  unsafe: 'unsafe_reports',
+  roadBlocked: 'blocked_reports',
+  cleared: 'cleared_reports',
+});
+const INCIDENT_CONCERN_REASONS = new Set([
+  'false_report',
+  'offensive_content',
+  'private_information',
+  'dangerous_advice',
+  'spam_or_abuse',
+]);
+
 exports.submit_incident = onCall(callableOptions, async (request) => {
   const uid = requireAuth(request);
   const now = new Date();
   const payload = sanitizeIncidentPayload(request.data || {}, uid);
   const privateRef = db.collection('safety_reports_private').doc();
   const publicRef = db.collection('safety_incidents_public').doc(privateRef.id);
+  const rateRef = feedRateLimitRef(uid, 'submit');
   const publicCoordinate = publicIncidentCoordinate(payload);
 
   await db.runTransaction(async (transaction) => {
+    await enforceRateLimit(transaction, rateRef, now, SUBMISSION_RATE_LIMIT);
+
     transaction.set(privateRef, withoutUndefined({
       ownerUid: uid,
       clientRef: payload.clientRef,
@@ -305,6 +348,102 @@ exports.resolve_sos = onCall(callableOptions, async (request) => {
   return { resolved: true };
 });
 
+exports.record_incident_signal = onCall(callableOptions, async (request) => {
+  const uid = requireAuth(request);
+  const now = new Date();
+  const incidentId = cleanString(request.data?.incident_id, 200);
+  const signal = cleanString(request.data?.signal, 40);
+
+  if (!incidentId) {
+    throw new HttpsError('invalid-argument', 'incident_id is required');
+  }
+  if (!Object.prototype.hasOwnProperty.call(SIGNAL_COUNTER_FIELD, signal)) {
+    throw new HttpsError('invalid-argument', 'Unsupported community signal');
+  }
+
+  const publicRef = db.collection('safety_incidents_public').doc(incidentId);
+  const rateRef = feedRateLimitRef(uid, 'signal');
+
+  const result = await db.runTransaction(async (transaction) => {
+    const snapshot = await transaction.get(publicRef);
+    if (!snapshot.exists) {
+      throw new HttpsError('not-found', 'Incident not found');
+    }
+    await enforceRateLimit(transaction, rateRef, now, SIGNAL_RATE_LIMIT);
+
+    const incident = snapshot.data();
+    if (incident.status === 'Resolved') {
+      return { status: incident.status, severity: incident.severity, applied: false };
+    }
+
+    // Status/severity are derived server-side from the stored counters; the
+    // client is not trusted to set them. See firestore.rules (public feed is
+    // read-only to clients) — this callable is the only write path.
+    const derived = deriveSignalOutcome(signal, incident);
+    transaction.update(publicRef, withoutUndefined({
+      [SIGNAL_COUNTER_FIELD[signal]]: FieldValue.increment(1),
+      status: derived.status,
+      severity: derived.severity,
+      updated_at: FieldValue.serverTimestamp(),
+    }));
+
+    return { status: derived.status, severity: derived.severity, applied: true };
+  });
+
+  return {
+    incident_id: incidentId,
+    status: result.status,
+    severity: result.severity,
+    applied: result.applied,
+  };
+});
+
+exports.record_incident_concern = onCall(callableOptions, async (request) => {
+  const uid = requireAuth(request);
+  const now = new Date();
+  const incidentId = cleanString(request.data?.incident_id, 200);
+  const reason = cleanString(request.data?.reason, 80);
+
+  if (!incidentId) {
+    throw new HttpsError('invalid-argument', 'incident_id is required');
+  }
+  if (!INCIDENT_CONCERN_REASONS.has(reason)) {
+    throw new HttpsError('invalid-argument', 'Unsupported concern reason');
+  }
+
+  const publicRef = db.collection('safety_incidents_public').doc(incidentId);
+  const concernRef = db.collection('safety_incident_concerns_private').doc();
+  const rateRef = feedRateLimitRef(uid, 'concern');
+
+  await db.runTransaction(async (transaction) => {
+    const snapshot = await transaction.get(publicRef);
+    if (!snapshot.exists) {
+      throw new HttpsError('not-found', 'Incident not found');
+    }
+
+    await enforceRateLimit(transaction, rateRef, now, CONCERN_RATE_LIMIT);
+
+    transaction.set(concernRef, {
+      incidentId,
+      reporterUid: uid,
+      reason,
+      source: 'ios',
+      createdAt: FieldValue.serverTimestamp(),
+      deleteAfter: Timestamp.fromDate(retentionDate(now)),
+    });
+    transaction.update(publicRef, {
+      concern_count: FieldValue.increment(1),
+      last_concern_at: FieldValue.serverTimestamp(),
+      updated_at: FieldValue.serverTimestamp(),
+    });
+  });
+
+  return {
+    incident_id: incidentId,
+    recorded: true,
+  };
+});
+
 exports.request_sos_session_access = onCall(callableOptions, async (request) => {
   const uid = requireAuth(request);
   const role = privilegedRoleFromClaims(request.auth.token || {});
@@ -510,6 +649,81 @@ function secretValue(secret) {
   } catch {
     return null;
   }
+}
+
+function feedRateLimitRef(uid, action) {
+  return db.collection('safety_feed_rate_limits_private').doc(`${uid}_${action}`);
+}
+
+// Sliding-window + cooldown limiter. Must be called before any writes in the
+// enclosing transaction (it issues a read), and persists the updated window.
+async function enforceRateLimit(transaction, rateRef, now, limit) {
+  const snap = await transaction.get(rateRef);
+  const windowStartsAt = new Date(now.getTime() - limit.windowSeconds * 1000);
+  const recentEvents = snap.exists
+    ? (snap.data().recentEvents || [])
+      .map(timestampToDate)
+      .filter((date) => date && date.getTime() >= windowStartsAt.getTime())
+    : [];
+  const latest = recentEvents.at(-1);
+
+  if (latest && now.getTime() - latest.getTime() < limit.cooldownSeconds * 1000) {
+    throw new HttpsError('resource-exhausted', limit.cooldownMessage);
+  }
+  if (recentEvents.length >= limit.windowLimit) {
+    throw new HttpsError('resource-exhausted', limit.windowMessage);
+  }
+
+  recentEvents.push(now);
+  transaction.set(rateRef, {
+    recentEvents: recentEvents.map((date) => Timestamp.fromDate(date)),
+    updatedAt: FieldValue.serverTimestamp(),
+    deleteAfter: Timestamp.fromDate(retentionDate(now)),
+  }, { merge: true });
+}
+
+// Server-authoritative port of the iOS IncidentStore signal rules. Counters are
+// incremented separately via FieldValue.increment; the +1 here mirrors the
+// post-increment state the client computes locally.
+function deriveSignalOutcome(signal, incident) {
+  let status = typeof incident.status === 'string' ? incident.status : 'Active';
+  let severity = typeof incident.severity === 'string' ? incident.severity : 'Medium';
+  const confirmations = numberOr(incident.confirmations, 1);
+  const disputes = numberOr(incident.disputes, 0);
+  const clearedReports = numberOr(incident.cleared_reports, 0);
+
+  switch (signal) {
+    case 'notSeen':
+      if (status === 'Active' && disputes + 1 >= confirmations) {
+        status = 'Watching';
+      }
+      break;
+    case 'unsafe':
+      status = 'Active';
+      if (severity !== 'Urgent') {
+        severity = 'High';
+      }
+      break;
+    case 'roadBlocked':
+      // Only raise the floor to Medium; never weaken an existing severity.
+      if (severity === 'Low') {
+        severity = 'Medium';
+      }
+      break;
+    case 'cleared':
+      status = clearedReports + 1 >= 3 ? 'Resolved' : 'Watching';
+      break;
+    case 'seen':
+    default:
+      break;
+  }
+
+  return { status, severity };
+}
+
+function numberOr(value, fallback) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
 }
 
 async function applyActivationRateLimit(transaction, rateRef, now) {
@@ -771,5 +985,8 @@ if (process.env.NODE_ENV === 'test') {
   exports.__test = {
     publicIncidentCoordinate,
     sanitizeIncidentPayload,
+    deriveSignalOutcome,
+    SIGNAL_COUNTER_FIELD,
+    INCIDENT_CONCERN_REASONS,
   };
 }

@@ -179,29 +179,41 @@ final class SafetyIncidentRemoteStore {
         return uploaded
     }
 
+    /// Records a community signal through the `record_incident_signal` callable.
+    /// The public feed is read-only to clients (see firestore.rules); the server
+    /// owns the counter increment and the derived status/severity, so the client
+    /// no longer sends those — it cannot be trusted to set them.
     func recordSignal(
         _ signal: CommunitySignal,
-        forIncidentWithID id: UUID,
-        newStatus: IncidentStatus,
-        newSeverity: IncidentSeverity
+        forIncidentWithID id: UUID
     ) async throws {
         try await ensureSignedIn()
 
-        var fields: [String: Any] = [
-            "status": newStatus.rawValue,
-            "severity": newSeverity.rawValue
-        ]
-        switch signal {
-        case .seen:        fields["confirmations"]   = FieldValue.increment(Int64(1))
-        case .notSeen:     fields["disputes"]        = FieldValue.increment(Int64(1))
-        case .unsafe:      fields["unsafe_reports"]  = FieldValue.increment(Int64(1))
-        case .roadBlocked: fields["blocked_reports"] = FieldValue.increment(Int64(1))
-        case .cleared:     fields["cleared_reports"] = FieldValue.increment(Int64(1))
-        }
+        _ = try await callFunction(
+            named: "record_incident_signal",
+            data: [
+                "incident_id": id.uuidString,
+                "signal": signal.rawValue
+            ]
+        )
+    }
 
-        try await db.collection("safety_incidents_public")
-            .document(id.uuidString)
-            .updateData(fields)
+    /// Reports objectionable or unsafe user-generated incident content for review.
+    /// The local app hides the report immediately; the backend keeps a private,
+    /// rate-limited moderation record tied to the anonymous reporter.
+    func recordConcern(
+        _ reason: IncidentConcernReason,
+        forIncidentWithID id: UUID
+    ) async throws {
+        try await ensureSignedIn()
+
+        _ = try await callFunction(
+            named: "record_incident_concern",
+            data: [
+                "incident_id": id.uuidString,
+                "reason": reason.rawValue
+            ]
+        )
     }
 
     private func ensureSignedIn() async throws {

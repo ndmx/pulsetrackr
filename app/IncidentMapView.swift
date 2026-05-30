@@ -216,14 +216,14 @@ private struct LiveIncidentPin: View {
 
             Image(systemName: incident.subtype.icon)
                 .font(.system(size: 23, weight: .heavy))
-                .foregroundStyle(iconColor)
+                .foregroundStyle(.white)
                 .frame(width: 46, height: 46)
                 .background(.black.opacity(0.82), in: Circle())
                 .overlay(
                     Circle()
-                        .stroke(incident.category.color, lineWidth: 3)
+                        .stroke(incident.severity.tint, lineWidth: 3)
                 )
-                .shadow(color: incident.category.color.opacity(0.65), radius: 14)
+                .shadow(color: incident.severity.tint.opacity(0.65), radius: 14)
                 .shadow(color: .black.opacity(0.55), radius: 7, y: 4)
 
             Image(systemName: incident.confidence.icon)
@@ -235,10 +235,6 @@ private struct LiveIncidentPin: View {
         }
         .accessibilityLabel("\(incident.subtype.label): \(incident.title)")
     }
-
-    private var iconColor: Color {
-        incident.category == .security || incident.category == .fire ? incident.category.color : .white
-    }
 }
 
 private struct LiveStatusPill: View {
@@ -246,12 +242,11 @@ private struct LiveStatusPill: View {
 
     var body: some View {
         Label("\(count)", systemImage: "exclamationmark.triangle.fill")
-            .font(.caption)
-            .fontWeight(.bold)
-            .foregroundStyle(.black)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 7)
-            .background(Color.yellow, in: Capsule())
+            .font(.caption.weight(.bold))
+            .foregroundStyle(.white)
+            .padding(.horizontal, DS.Space.md)
+            .padding(.vertical, DS.Space.sm)
+            .background(DS.Color.accent, in: Capsule())
     }
 }
 

@@ -206,7 +206,7 @@ struct FeedView: View {
             VStack(alignment: .leading, spacing: 5) {
                 Text(headline)
                     .font(.system(size: 32, weight: .heavy, design: .rounded))
-                    .foregroundStyle(priorityCount > 0 ? .red : .green)
+                    .foregroundStyle(priorityCount > 0 ? DS.Color.accent : DS.Color.positive)
                     .lineLimit(2)
 
                 Text(confirmedSightingsLabel)
@@ -299,7 +299,7 @@ struct FeedView: View {
                         Text(headline)
                             .font(.title3)
                             .fontWeight(.heavy)
-                            .foregroundStyle(priorityCount > 0 ? .red : .green)
+                            .foregroundStyle(priorityCount > 0 ? DS.Color.accent : DS.Color.positive)
                             .lineLimit(2)
                     }
 
@@ -456,21 +456,22 @@ private extension FeedSheetPosition {
 private struct FeedMapPin: View {
     var incident: Incident
 
+    // Pin fill = severity (the heat-of-urgency read); icon inside = category identity.
     var body: some View {
         ZStack {
             Circle()
-                .fill(incident.category.color.opacity(0.22))
+                .fill(incident.severity.tint.opacity(0.22))
                 .frame(width: incident.isHighRisk ? 96 : 70, height: incident.isHighRisk ? 96 : 70)
 
             Circle()
                 .fill(.black.opacity(0.86))
                 .frame(width: 42, height: 42)
-                .overlay(Circle().stroke(incident.category.color, lineWidth: 3))
-                .shadow(color: incident.category.color.opacity(0.75), radius: 14)
+                .overlay(Circle().stroke(incident.severity.tint, lineWidth: 3))
+                .shadow(color: incident.severity.tint.opacity(0.75), radius: 14)
 
             Image(systemName: incident.subtype.icon)
                 .font(.system(size: 18, weight: .heavy))
-                .foregroundStyle(incident.category == .security || incident.category == .fire ? incident.category.color : .white)
+                .foregroundStyle(.white)
         }
     }
 }
@@ -563,18 +564,19 @@ private struct IncidentCard: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 11) {
-            HStack(alignment: .top, spacing: 12) {
+        VStack(alignment: .leading, spacing: DS.Space.md) {
+            HStack(alignment: .top, spacing: DS.Space.md) {
                 Image(systemName: incident.subtype.icon)
                     .font(.headline)
-                    .foregroundStyle(.white)
+                    .foregroundStyle(incident.category.color)
                     .frame(width: 42, height: 42)
-                    .background(incident.category.color, in: Circle())
+                    .background(incident.category.color.opacity(0.16), in: Circle())
+                    .overlay(Circle().stroke(incident.category.color.opacity(0.32), lineWidth: 1))
 
                 VStack(alignment: .leading, spacing: 5) {
                     HStack(spacing: 7) {
                         Text(distanceText)
-                            .foregroundStyle(incident.category.color)
+                            .foregroundStyle(.white.opacity(0.86))
                         Text("•")
                             .foregroundStyle(.white.opacity(0.38))
                         Text(incident.reportedAt, style: .relative)
@@ -595,26 +597,22 @@ private struct IncidentCard: View {
 
                 Spacer()
 
-                Image(systemName: "chevron.right")
-                    .font(.caption)
-                    .fontWeight(.heavy)
-                    .foregroundStyle(.white.opacity(0.38))
-                    .padding(.top, 14)
+                DSSeverityBadge(severity: incident.severity)
             }
 
-            HStack(spacing: 8) {
+            HStack(spacing: DS.Space.sm) {
                 InfoPill(icon: incident.confidence.icon, title: incident.confidence.rawValue, color: incident.confidence.color)
                 InfoPill(icon: "eye.fill", title: "\(incident.confirmations)", color: .white.opacity(0.72))
                 if incident.isHighRisk {
-                    InfoPill(icon: "bell.fill", title: "Alert sent", color: .red)
+                    InfoPill(icon: "bell.fill", title: "Alert sent", color: DS.Color.accent)
                 }
             }
         }
-        .padding(14)
-        .background(.white.opacity(0.09), in: RoundedRectangle(cornerRadius: 17))
+        .padding(DS.Space.md)
+        .background(.white.opacity(0.09), in: RoundedRectangle(cornerRadius: DS.Radius.lg, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 17)
-                .stroke(.white.opacity(0.06), lineWidth: 1)
+            RoundedRectangle(cornerRadius: DS.Radius.lg, style: .continuous)
+                .stroke(.white.opacity(0.08), lineWidth: 1)
         )
     }
 }
@@ -641,7 +639,7 @@ private struct EmptyFeedState: View {
         VStack(spacing: 8) {
             Image(systemName: "checkmark.seal.fill")
                 .font(.title2)
-                .foregroundStyle(.green)
+                .foregroundStyle(DS.Color.positive)
             Text("Nothing active here")
                 .font(.headline)
                 .foregroundStyle(.white)

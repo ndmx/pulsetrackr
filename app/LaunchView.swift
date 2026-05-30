@@ -15,7 +15,7 @@ struct OpeningSplashView: View {
                 ZStack {
                     ForEach(0..<4, id: \.self) { index in
                         Circle()
-                            .stroke(Color.red.opacity(0.20 - Double(index) * 0.04), lineWidth: 1.2)
+                            .stroke(DS.Color.accent.opacity(0.20 - Double(index) * 0.04), lineWidth: 1.2)
                             .frame(width: 88 + CGFloat(index * 46), height: 88 + CGFloat(index * 46))
                             .scaleEffect(pulseScale + CGFloat(index) * 0.06)
                             .opacity(pulseOpacity)
@@ -23,10 +23,10 @@ struct OpeningSplashView: View {
 
                     Image(systemName: "dot.radiowaves.left.and.right")
                         .font(.system(size: 38, weight: .heavy))
-                        .foregroundStyle(.red)
+                        .foregroundStyle(DS.Color.accent)
                         .frame(width: 86, height: 86)
-                        .background(Color.red.opacity(0.13), in: Circle())
-                        .overlay(Circle().stroke(Color.red.opacity(0.30), lineWidth: 1.5))
+                        .background(DS.Color.accent.opacity(0.13), in: Circle())
+                        .overlay(Circle().stroke(DS.Color.accent.opacity(0.30), lineWidth: 1.5))
                         .scaleEffect(logoScale)
                         .opacity(logoOpacity)
                 }
@@ -107,7 +107,7 @@ struct LaunchView: View {
         ZStack {
             ForEach(0..<3, id: \.self) { i in
                 Circle()
-                    .stroke(Color.red.opacity(0.18 - Double(i) * 0.05), lineWidth: 1)
+                    .stroke(DS.Color.accent.opacity(0.18 - Double(i) * 0.05), lineWidth: 1)
                     .frame(width: 82 + CGFloat(i * 52), height: 82 + CGFloat(i * 52))
                     .scaleEffect(pulseScale + CGFloat(i) * 0.12)
                     .opacity(pulseOpacity)
@@ -115,10 +115,10 @@ struct LaunchView: View {
 
             Image(systemName: "dot.radiowaves.left.and.right")
                 .font(.system(size: 34, weight: .heavy))
-                .foregroundStyle(.red)
+                .foregroundStyle(DS.Color.accent)
                 .frame(width: 80, height: 80)
-                .background(Color.red.opacity(0.13), in: Circle())
-                .overlay(Circle().stroke(Color.red.opacity(0.28), lineWidth: 1.5))
+                .background(DS.Color.accent.opacity(0.13), in: Circle())
+                .overlay(Circle().stroke(DS.Color.accent.opacity(0.28), lineWidth: 1.5))
                 .opacity(iconOpacity)
         }
     }
@@ -147,19 +147,19 @@ struct LaunchView: View {
         VStack(alignment: .leading, spacing: 22) {
             FeatureRow(
                 icon: "map.fill",
-                color: .blue,
+                color: DS.Color.textSecondary,
                 title: "Live incident map",
                 description: "Active reports from your community, updated in real time"
             )
             FeatureRow(
                 icon: "bell.and.waves.left.and.right.fill",
-                color: .red,
+                color: DS.Color.accent,
                 title: "Report what you see",
                 description: "Attach a photo, record audio, mark it live, or type — takes under 20 seconds"
             )
             FeatureRow(
                 icon: "location.circle.fill",
-                color: .green,
+                color: DS.Color.positive,
                 title: "Your location stays private",
                 description: "The map shows areas only — your exact spot is never shared"
             )
@@ -169,12 +169,8 @@ struct LaunchView: View {
     private var ctaButton: some View {
         Button(action: onContinue) {
             Text("Open the map")
-                .font(.headline)
-                .frame(maxWidth: .infinity, minHeight: 56)
         }
-        .buttonStyle(.borderedProminent)
-        .tint(.red)
-        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .buttonStyle(DSPrimaryButtonStyle())
     }
 
     private func runEntrance() {

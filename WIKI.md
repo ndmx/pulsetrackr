@@ -47,7 +47,7 @@ Data Layer
 External
   ├── Firebase Auth           → anonymous sign-in before submissions
   ├── Firebase Firestore      → safety_incidents_public (geohash prefix-range listeners)
-  ├── Firebase Functions      → submit_incident (writes geohash) + SOS callables
+  ├── Firebase Functions      → submit_incident (geohash) + record_incident_signal + SOS callables
   ├── Firebase Storage        → incident photo/voice evidence, scoped to reporter uid
   ├── Twilio / SendGrid       → optional trusted-contact SOS delivery providers
   └── Mapbox Maps SDK         → conditional compile (#if canImport(MapboxMaps))
@@ -152,7 +152,7 @@ to Building fire, not Market fire. No new subtypes were added. Covered by
 | `SettingsView.swift` | Settings | `SettingsView` + private views incl. `PrecisionLocationRow` | `@AppStorage` (4 keys), `LocationManager` (auth + accuracy), `SOSStore` | `@AppStorage` (4 keys) |
 | `Incident.swift` | Domain model | `Incident`, `IncidentCategory`, `IncidentSubtype`, `IncidentSeverity`, `IncidentStatus`, `IncidentConfidence`, `CommunitySignal`, `IncidentUpdate` + `CLLocationCoordinate2D` extensions (`pulseDefaultCenter`, `isValid`, locale-aware distance) | — | — (value types) |
 | `IncidentStore.swift` | State manager + geo-region subscription | `IncidentStore`; `Incident.seedIncidents` is **`#if DEBUG` only** (previews) | `SafetyIncidentRemoteStore` (optional) | self: in-place O(1) mutation via `lookup[UUID:Int]`; `@Published lastSyncError` |
-| `SafetyIncidentRemoteStore.swift` | Firebase integration; geohash-bounded feed | `SafetyIncidentRemoteStore`, `SafetyIncidentRemoteStoreError` | Firestore `safety_incidents_public` via per-prefix `geohash` range listeners | Firestore via `submit_incident` Function; Storage evidence |
+| `SafetyIncidentRemoteStore.swift` | Firebase integration; geohash-bounded feed | `SafetyIncidentRemoteStore`, `SafetyIncidentRemoteStoreError` | Firestore `safety_incidents_public` via per-prefix `geohash` range listeners | Functions `submit_incident` + `record_incident_signal` (no direct Firestore writes); Storage evidence |
 | `Geohash.swift` | Geohash encode + neighbour/covering-cell + radius→precision | `Geohash` (enum) | — | — (pure) |
 | `MapDefaults.swift` | Shared initial-camera logic | `MapDefaults` | `LocationManager.lastKnownCoordinate` | — |
 | `SharedComponents.swift` | Reusable UI: `cardPanel()`, `CategoryChip`, `LocationPromptCard` | view modifier + 2 views | `CLAuthorizationStatus` | opens Settings / requests permission |
@@ -166,7 +166,7 @@ to Building fire, not Market fire. No new subtypes were added. Covered by
 | `SOSPrivacyPolicy.swift` | SOS sharing limits | `SOSPrivacyPolicy`, `SOSPayloadCoding` | — | — |
 | `firebase.json` | Firebase backend config | Functions, Firestore, emulator config | — | deploy/emulator behavior |
 | `firestore.rules` | Firestore access rules | server-only SOS collections | Auth/custom claims | denies raw SOS client reads |
-| `functions/src/index.js` | SOS Cloud Functions | `activate_sos`, `append_sos_location`, `resolve_sos`, `request_sos_session_access` | callable payloads | private SOS collections |
+| `functions/src/index.js` | Cloud Functions (incident feed + SOS) | `submit_incident`, `record_incident_signal`, `activate_sos`, `append_sos_location`, `resolve_sos`, `request_sos_session_access` | callable payloads | `safety_incidents_public`/`safety_reports_private`, private SOS + feed rate-limit collections |
 | `functions/src/sosShared.js` | SOS backend validation helpers | payload sanitizers, idempotency helpers | callable payloads | pure values |
 | `functions/src/notificationProviders.js` | SOS notification adapters | Twilio SMS/voice, SendGrid email | provider secrets | provider delivery APIs |
 | `IncidentClassifier.swift` | Text classification | `IncidentClassifier`, `IncidentClassification` | title + summary strings | — (pure function) |
@@ -281,10 +281,22 @@ No location yet / permission denied → no subscription → empty feed + Locatio
 IncidentDetailView → user taps signal button
   → IncidentStore.record(_:for:)
       ├── lookup[id] → index (O(1))
-      ├── mutates incidents[index] in-place (no COW copy)
+      ├── mutates incidents[index] in-place (no COW copy)   [optimistic UI only]
       ├── updates status, severity, counters
-      └── prepends IncidentUpdate to updates[]
+      ├── prepends IncidentUpdate to updates[]
+      └── if remoteStore: Task { retrying(3×) { recordSignal(signal, forIncidentWithID:) } }
+            └── functions.httpsCallable("record_incident_signal").call({ incident_id, signal })
 ```
+
+The public feed is **read-only to clients** (`firestore.rules`), so signals route
+through the `record_incident_signal` callable — the client never writes the counters
+or status/severity directly. The function increments the matching counter atomically
+(`FieldValue.increment`) and **derives status/severity server-side** (`deriveSignalOutcome`,
+a faithful port of the iOS rules), so a client cannot forge them. Resolved incidents
+are no-ops, and signals are per-user rate-limited (2 s cooldown, 120/hr). The local
+mutation above is purely optimistic; the geohash listener later reconciles to server
+truth. The `roadBlocked` rule only *raises* a Low incident's floor to Medium — it
+never downgrades a higher severity (closing a severity-suppression vector).
 
 ### Feed/Map Filtering Pipeline
 
@@ -398,6 +410,23 @@ are themselves `#if DEBUG` (since `#Preview` macros compile into release builds)
 
 ---
 
+### ✅ Resolved — Public-feed abuse hardening
+
+The public community feed is the only client-influenced surface, so both write
+paths are now server-gated:
+
+- **Report spam** — `submit_incident` enforces a per-user rate limit (15 s cooldown,
+  20/hr) inside its write transaction, counters held in the rules-locked
+  `safety_feed_rate_limits_private` collection (TTL via `deleteAfter`).
+- **Signal trust** — community confirm/dispute previously did a direct Firestore
+  `updateData` (silently denied by `allow write: if false`). It now flows through the
+  `record_incident_signal` callable, which owns the counter increment and derives
+  status/severity itself — clients can no longer set them. Same rate-limit pattern
+  (2 s / 120 hr). The `roadBlocked` rule was also corrected to only raise (never
+  lower) severity. Covered by `functions/test/incidentSignal.test.js`.
+
+---
+
 ### 🟢 Low — `IncidentDetailView` Always Fetches Live Incident
 
 `IncidentDetailView` takes an `Incident` parameter but immediately replaces it with `incidentStore.incident(withID:)` on every body evaluation. This is intentional for live updates but means the passed-in incident is only used as a fallback.
@@ -455,9 +484,11 @@ Law-enforcement and admin access must be audited, time-limited, and restricted t
 The Firebase backend now lives in this repo:
 
 - `firebase.json` configures Firestore rules/indexes, Storage rules, and local emulators for Auth, Functions, and Firestore.
-- `firestore.rules` denies direct client access to raw SOS location/session/notification/idempotency/rate-limit collections. `safety_incidents_public` is client-readable but client-unwritable (writes go through `submit_incident`, which also stamps the `geohash`).
+- `firestore.rules` denies direct client access to raw SOS location/session/notification/idempotency/rate-limit collections and to `safety_feed_rate_limits_private`. `safety_incidents_public` is client-readable but client-unwritable: new reports go through `submit_incident` (which also stamps the `geohash`) and community signals go through `record_incident_signal`.
 - `storage.rules` scopes incident evidence to `incident_reports/{uid}/…`: the owner may create image/audio ≤10 MB; everything else denied.
-- `functions/src/index.js` implements callable SOS endpoints:
+- `functions/src/index.js` implements the callable endpoints:
+  - `submit_incident`: auth/App Check, payload sanitization, **per-user rate limit** (15 s cooldown, 20/hr via `safety_feed_rate_limits_private`), exact write to `safety_reports_private` + fuzzed/geohashed public write — all in one transaction.
+  - `record_incident_signal`: auth/App Check, per-user rate limit (2 s cooldown, 120/hr), server-authoritative counter increment + status/severity derivation (`deriveSignalOutcome`); the only write path to the read-only public feed. No-op on resolved incidents.
   - `activate_sos`: auth/App Check, idempotency, rate limits, server-side trail caps, private session write, audit write, notification queue + delivery attempt.
   - `append_sos_location`: auth/App Check, owner check, active/unexpired session check, idempotent sequence updates, append-only update records.
   - `resolve_sos`: auth/App Check, owner check, supported resolution reasons, idempotent resolution, audit write.

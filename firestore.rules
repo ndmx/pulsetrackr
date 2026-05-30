@@ -26,6 +26,14 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    match /safety_incident_concerns_private/{concernId} {
+      allow read, write: if false;
+    }
+
+    match /safety_feed_rate_limits_private/{rateLimitId} {
+      allow read, write: if false;
+    }
+
     match /sos_sessions_private/{sessionId} {
       allow read, write: if false;
     }
