@@ -83,7 +83,7 @@ struct SOSRoutePlaybackView: View {
 
                 VStack(alignment: .leading, spacing: 3) {
                     Text(sosStore.uploadStatusText)
-                        .font(DS.Font.body().weight(.bold))
+                        .font(DS.Font.bodyBold())
                         .foregroundStyle(DS.Color.textPrimary)
                     Text("Failed updates stay in the local queue until retry succeeds.")
                         .font(DS.Font.caption())
@@ -97,7 +97,7 @@ struct SOSRoutePlaybackView: View {
                 } label: {
                     Label("Retry now", systemImage: "arrow.clockwise")
                 }
-                .buttonStyle(DSPrimaryButtonStyle(tint: IncidentSeverity.high.tint))
+                .buttonStyle(DSPrimaryButtonStyle(tint: IncidentSeverity.high.tint, foreground: .white))
             }
         }
         .pulsePanel()
@@ -154,7 +154,7 @@ private struct SOSRoutePointRow: View {
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(isNewest ? "Last known position" : "Trail point")
-                    .font(DS.Font.body().weight(.bold))
+                    .font(DS.Font.bodyBold())
                     .foregroundStyle(DS.Color.textPrimary)
                 Text("\(point.coordinate.latitude.formatted(.number.precision(.fractionLength(5)))), \(point.coordinate.longitude.formatted(.number.precision(.fractionLength(5))))")
                     .font(DS.Font.caption())
@@ -165,7 +165,7 @@ private struct SOSRoutePointRow: View {
             Spacer()
 
             Text(point.timestamp, style: .time)
-                .font(DS.Font.caption().weight(.semibold))
+                .font(DS.Font.label())
                 .foregroundStyle(DS.Color.textSecondary)
         }
     }
@@ -178,11 +178,11 @@ private struct SOSRouteMetric: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(value)
-                .font(.system(.headline, design: .rounded, weight: .heavy))
+                .font(DS.Font.cardTitle())
                 .foregroundStyle(DS.Color.textPrimary)
                 .lineLimit(1)
             Text(label)
-                .font(.caption2.weight(.bold))
+                .font(DS.Font.caption2Strong())
                 .textCase(.uppercase)
                 .foregroundStyle(DS.Color.textTertiary)
         }

@@ -33,10 +33,10 @@ struct OpeningSplashView: View {
 
                 HStack(alignment: .lastTextBaseline, spacing: 1) {
                     Text("Pulse")
-                        .font(.system(size: 38, weight: .heavy, design: .rounded))
+                        .font(DS.Font.display(40, relativeTo: .largeTitle))
                         .foregroundStyle(.white)
                     Text("trackr")
-                        .font(.system(size: 38, weight: .thin, design: .rounded))
+                        .font(DS.Font.display(40, relativeTo: .largeTitle))
                         .foregroundStyle(.white.opacity(0.50))
                 }
                 .opacity(wordmarkOpacity)
@@ -127,15 +127,15 @@ struct LaunchView: View {
         VStack(spacing: 10) {
             HStack(alignment: .lastTextBaseline, spacing: 1) {
                 Text("Pulse")
-                    .font(.system(size: 44, weight: .heavy, design: .rounded))
+                    .font(DS.Font.display(48, relativeTo: .largeTitle))
                     .foregroundStyle(.white)
                 Text("trackr")
-                    .font(.system(size: 44, weight: .thin, design: .rounded))
+                    .font(DS.Font.display(48, relativeTo: .largeTitle))
                     .foregroundStyle(.white.opacity(0.48))
             }
 
             Text("See what's happening in your area\nbefore you leave home.")
-                .font(.subheadline)
+                .font(DS.Font.body())
                 .fontWeight(.medium)
                 .foregroundStyle(.white.opacity(0.56))
                 .multilineTextAlignment(.center)
@@ -211,11 +211,11 @@ private struct FeatureRow: View {
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(title)
-                    .font(.subheadline)
+                    .font(DS.Font.body())
                     .fontWeight(.semibold)
                     .foregroundStyle(.white)
                 Text(description)
-                    .font(.caption)
+                    .font(DS.Font.caption())
                     .foregroundStyle(.white.opacity(0.52))
                     .fixedSize(horizontal: false, vertical: true)
             }

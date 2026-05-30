@@ -312,17 +312,10 @@ struct ReportIncidentView: View {
                 selectedPhotoData = data
                 hasMediaEvidence = data != nil
                 isLoadingPhoto = false
-                fillIfNeeded(title: "Photo report", summary: "Reporter attached a photo and is describing what is happening nearby.")
+                // Attaching a photo must NOT write into the visible text fields.
+                // The photo evidence note is added at submit time (see
+                // reportEvidenceNotes), not into the user's description.
             }
-        }
-    }
-
-    private func fillIfNeeded(title newTitle: String, summary newSummary: String) {
-        if title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            title = newTitle
-        }
-        if summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            summary = newSummary
         }
     }
 }
@@ -340,7 +333,7 @@ private struct ReportHero: View {
     var body: some View {
         VStack(alignment: .leading, spacing: DS.Space.md) {
             Text("Report what is happening")
-                .font(.system(.title2, design: .rounded, weight: .bold))
+                .font(DS.Font.display(30, relativeTo: .title2))
                 .foregroundStyle(DS.Color.textPrimary)
             Text("Show it, say it, or type it. Classification happens after.")
                 .font(DS.Font.body())
@@ -349,11 +342,11 @@ private struct ReportHero: View {
             let ok = hasPrivateCoordinate
             Label(locationStatus, systemImage: ok ? "location.fill" : "location.slash.fill")
                 .font(DS.Font.label())
-                .foregroundStyle(ok ? DS.Color.positive : DS.Color.accent)
+                .foregroundStyle(ok ? DS.Color.positive : DS.Color.alert)
                 .padding(.horizontal, DS.Space.md)
                 .padding(.vertical, DS.Space.sm)
-                .background((ok ? DS.Color.positive : DS.Color.accent).opacity(0.12), in: Capsule())
-                .overlay(Capsule().stroke((ok ? DS.Color.positive : DS.Color.accent).opacity(0.3), lineWidth: 1))
+                .background((ok ? DS.Color.positive : DS.Color.alert).opacity(0.12), in: Capsule())
+                .overlay(Capsule().stroke((ok ? DS.Color.positive : DS.Color.alert).opacity(0.3), lineWidth: 1))
         }
         .pulsePanel()
     }
@@ -416,7 +409,7 @@ private struct ReportComposer: View {
 
     private var statusControls: some View {
         HStack(spacing: DS.Space.md) {
-            StatusPill(title: "Happening now", icon: "dot.radiowaves.left.and.right", color: DS.Color.accent, isSelected: isOngoing) {
+            StatusPill(title: "Happening now", icon: "dot.radiowaves.left.and.right", color: DS.Color.alert, isSelected: isOngoing) {
                 isOngoing = true
             }
             StatusPill(title: "Already happened", icon: "clock.arrow.circlepath", color: DS.Color.textSecondary, isSelected: !isOngoing) {
@@ -427,43 +420,35 @@ private struct ReportComposer: View {
 
     private var textFields: some View {
         VStack(spacing: DS.Space.md) {
-            DarkTextField(title: "Short title", text: $title)
-                .focused(focusedField, equals: .title)
-                .submitLabel(.next)
-                .onSubmit {
-                    focusedField.wrappedValue = .neighborhood
-                }
-            DarkTextField(title: "Neighborhood or landmark", text: $neighborhood)
-                .focused(focusedField, equals: .neighborhood)
-                .submitLabel(.next)
-                .onSubmit {
-                    focusedField.wrappedValue = .summary
-                }
-            DSFieldContainer {
-                TextEditor(text: $summary)
-                    .focused(focusedField, equals: .summary)
-                    .frame(minHeight: 120)
-                    .scrollContentBackground(.hidden)
-                    .foregroundStyle(DS.Color.textPrimary)
-                    .overlay(alignment: .topLeading) {
-                        if summary.isEmpty {
-                            Text("What is happening? Use your own words.")
-                                .font(DS.Font.body())
-                                .foregroundStyle(DS.Color.textTertiary)
-                                .padding(.top, DS.Space.sm)
-                                .allowsHitTesting(false)
-                        }
-                    }
-            }
-        }
-    }
+            LabeledReportField(
+                label: "Summary",
+                placeholder: "What's happening in this photo?",
+                hint: "e.g. Fallen tree blocking both lanes",
+                text: $title,
+                focus: focusedField,
+                field: .title,
+                submitLabel: .next,
+                onSubmit: { focusedField.wrappedValue = .neighborhood }
+            )
 
-    private func fillIfNeeded(title newTitle: String, summary newSummary: String) {
-        if title.isEmpty {
-            title = newTitle
-        }
-        if summary.isEmpty {
-            summary = newSummary
+            LabeledReportField(
+                label: "Neighborhood or landmark",
+                placeholder: "e.g. Allen Avenue, Ikeja",
+                text: $neighborhood,
+                focus: focusedField,
+                field: .neighborhood,
+                submitLabel: .next,
+                onSubmit: { focusedField.wrappedValue = .summary }
+            )
+
+            LabeledReportField(
+                label: "Describe in detail",
+                placeholder: "Provide more details about what you see and what is happening nearby.",
+                text: $summary,
+                focus: focusedField,
+                field: .summary,
+                multiline: true
+            )
         }
     }
 
@@ -510,14 +495,16 @@ private struct ReportComposer: View {
                 title: voiceRecorder.isRecording ? "Stop recording" : (voiceRecorder.recordingURL == nil ? "Record voice note" : "Record again"),
                 subtitle: voiceRecorder.statusText,
                 icon: voiceRecorder.isRecording ? "stop.circle.fill" : "mic.circle.fill",
-                color: voiceRecorder.isRecording ? DS.Color.accent : DS.Color.textSecondary
+                color: voiceRecorder.isRecording ? DS.Color.alert : DS.Color.textSecondary
             ) {
                 if voiceRecorder.isRecording {
                     voiceRecorder.stop()
                     hasVoiceNote = voiceRecorder.recordingURL != nil
                 } else {
+                    // Recording a voice note must NOT write into the visible text
+                    // fields. The voice evidence note is added at submit time (see
+                    // reportEvidenceNotes), not into the user's description.
                     voiceRecorder.start()
-                    fillIfNeeded(title: "Voice report", summary: "Reporter is sharing what is happening nearby.")
                 }
             }
 
@@ -527,7 +514,7 @@ private struct ReportComposer: View {
                     hasVoiceNote = false
                 } label: {
                     Label("Remove voice note", systemImage: "trash")
-                        .font(.subheadline)
+                        .font(DS.Font.body())
                         .fontWeight(.bold)
                 }
                 .buttonStyle(.bordered)
@@ -536,7 +523,7 @@ private struct ReportComposer: View {
 
             if let permissionMessage = voiceRecorder.permissionMessage {
                 Text(permissionMessage)
-                    .font(.caption)
+                    .font(DS.Font.caption())
                     .foregroundStyle(.orange)
             }
         }
@@ -557,7 +544,7 @@ private struct StatusPill: View {
                 Image(systemName: icon)
                     .font(.subheadline)
                 Text(title)
-                    .font(DS.Font.body().weight(.semibold))
+                    .font(DS.Font.bodyStrong())
             }
             .frame(maxWidth: .infinity, minHeight: 46)
             .background(isSelected ? color.opacity(0.16) : DS.Color.surfaceHigh, in: RoundedRectangle(cornerRadius: DS.Radius.md, style: .continuous))
@@ -571,16 +558,54 @@ private struct StatusPill: View {
     }
 }
 
-private struct DarkTextField: View {
-    var title: LocalizedStringKey
+/// Labeled report field: a small caption label on top, a prominent placeholder /
+/// value, and an optional example hint below — wrapped in the standard input
+/// surface. Single-line by default; `multiline` grows for long descriptions.
+private struct LabeledReportField: View {
+    var label: LocalizedStringKey
+    var placeholder: LocalizedStringKey
+    var hint: LocalizedStringKey? = nil
     @Binding var text: String
+    var focus: FocusState<ReportField?>.Binding
+    var field: ReportField
+    var submitLabel: SubmitLabel = .return
+    var multiline: Bool = false
+    var onSubmit: () -> Void = {}
 
     var body: some View {
-        DSFieldContainer {
-            TextField(title, text: $text)
-                .textFieldStyle(.plain)
+        VStack(alignment: .leading, spacing: DS.Space.sm) {
+            Text(label)
+                .font(DS.Font.bodyStrong())
                 .foregroundStyle(DS.Color.textPrimary)
+
+            Group {
+                if multiline {
+                    TextField(placeholder, text: $text, axis: .vertical)
+                        .lineLimit(4...10)
+                } else {
+                    TextField(placeholder, text: $text)
+                        .submitLabel(submitLabel)
+                        .onSubmit(onSubmit)
+                }
+            }
+            .font(.system(.title3, weight: .regular))
+            .foregroundStyle(DS.Color.textPrimary)
+            .tint(DS.Color.accent)
+            .focused(focus, equals: field)
+
+            if let hint {
+                Text(hint)
+                    .font(DS.Font.caption())
+                    .foregroundStyle(DS.Color.textTertiary)
+            }
         }
+        .padding(DS.Space.md)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(DS.Color.surfaceHigh, in: RoundedRectangle(cornerRadius: DS.Radius.md, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: DS.Radius.md, style: .continuous)
+                .stroke(DS.Color.hairline, lineWidth: DS.Stroke.hairline)
+        )
     }
 }
 
@@ -686,7 +711,7 @@ private struct PrivacyPanel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: DS.Space.sm) {
             Label(locationStatus, systemImage: "lock.shield")
-                .font(DS.Font.body().weight(.semibold))
+                .font(DS.Font.bodyStrong())
                 .foregroundStyle(DS.Color.textPrimary)
             Text("Exact reporter location stays private to the app. The public map shows an approximate incident area.")
                 .font(DS.Font.caption())

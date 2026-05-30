@@ -471,6 +471,7 @@
 				DEVELOPMENT_TEAM = 4ZSXLWH9W2;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Info.plist;
 				INFOPLIST_KEY_NSContactsUsageDescription = "PulseTrackr can import a trusted contact you choose for SOS alerts.";
 				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "PulseTrackr uses location to show nearby reports and, when you activate SOS, share exact location updates with your trusted contacts.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "PulseTrackr uses the microphone when you choose to record a voice note for an incident report.";
@@ -503,6 +504,7 @@
 				DEVELOPMENT_TEAM = 4ZSXLWH9W2;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Info.plist;
 				INFOPLIST_KEY_NSContactsUsageDescription = "PulseTrackr can import a trusted contact you choose for SOS alerts.";
 				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "PulseTrackr uses location to show nearby reports and, when you activate SOS, share exact location updates with your trusted contacts.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "PulseTrackr uses the microphone when you choose to record a voice note for an incident report.";

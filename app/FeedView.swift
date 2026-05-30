@@ -189,11 +189,11 @@ struct FeedView: View {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("AROUND YOU")
-                        .font(.caption)
+                        .font(DS.Font.caption())
                         .fontWeight(.heavy)
                         .foregroundStyle(.white)
                     Text("Nearby area • Last 24 hours")
-                        .font(.caption)
+                        .font(DS.Font.caption())
                         .fontWeight(.semibold)
                         .foregroundStyle(.white.opacity(0.62))
                 }
@@ -205,12 +205,12 @@ struct FeedView: View {
 
             VStack(alignment: .leading, spacing: 5) {
                 Text(headline)
-                    .font(.system(size: 32, weight: .heavy, design: .rounded))
-                    .foregroundStyle(priorityCount > 0 ? DS.Color.accent : DS.Color.positive)
+                    .font(DS.Font.display(34, relativeTo: .largeTitle))
+                    .foregroundStyle(priorityCount > 0 ? DS.Color.alert : DS.Color.positive)
                     .lineLimit(2)
 
                 Text(confirmedSightingsLabel)
-                    .font(.subheadline)
+                    .font(DS.Font.body())
                     .fontWeight(.semibold)
                     .foregroundStyle(.white.opacity(0.70))
             }
@@ -293,13 +293,13 @@ struct FeedView: View {
                 HStack {
                     VStack(alignment: .leading, spacing: 3) {
                         Text("AROUND YOU")
-                            .font(.caption2)
+                            .font(DS.Font.caption2())
                             .fontWeight(.heavy)
                             .foregroundStyle(.white.opacity(0.54))
                         Text(headline)
-                            .font(.title3)
+                            .font(DS.Font.title3())
                             .fontWeight(.heavy)
-                            .foregroundStyle(priorityCount > 0 ? DS.Color.accent : DS.Color.positive)
+                            .foregroundStyle(priorityCount > 0 ? DS.Color.alert : DS.Color.positive)
                             .lineLimit(2)
                     }
 
@@ -325,11 +325,11 @@ struct FeedView: View {
 
             HStack {
                 Text(sectionTitle)
-                    .font(.headline)
+                    .font(DS.Font.cardTitle())
                     .foregroundStyle(.white)
                 Spacer()
                 Text("\(filteredIncidents.count)")
-                    .font(.caption)
+                    .font(DS.Font.caption())
                     .fontWeight(.heavy)
                     .foregroundStyle(.white.opacity(0.72))
                     .padding(.horizontal, 9)
@@ -534,7 +534,7 @@ private struct ScopeSelector: View {
                     selectedScope = scope
                 } label: {
                     Label(scope.rawValue, systemImage: scope.icon)
-                        .font(.caption)
+                        .font(DS.Font.caption())
                         .fontWeight(.heavy)
                         .lineLimit(1)
                         .frame(maxWidth: .infinity)
@@ -582,16 +582,16 @@ private struct IncidentCard: View {
                         Text(incident.reportedAt, style: .relative)
                             .foregroundStyle(.white.opacity(0.60))
                     }
-                    .font(.caption)
+                    .font(DS.Font.caption())
                     .fontWeight(.heavy)
 
                     Text(incident.title)
-                        .font(.headline)
+                        .font(DS.Font.cardTitle())
                         .foregroundStyle(.white)
                         .lineLimit(2)
 
                     Text(incident.neighborhood)
-                        .font(.caption)
+                        .font(DS.Font.caption())
                         .foregroundStyle(.white.opacity(0.58))
                 }
 
@@ -604,7 +604,7 @@ private struct IncidentCard: View {
                 InfoPill(icon: incident.confidence.icon, title: incident.confidence.rawValue, color: incident.confidence.color)
                 InfoPill(icon: "eye.fill", title: "\(incident.confirmations)", color: .white.opacity(0.72))
                 if incident.isHighRisk {
-                    InfoPill(icon: "bell.fill", title: "Alert sent", color: DS.Color.accent)
+                    InfoPill(icon: "bell.fill", title: "Alert sent", color: DS.Color.alert)
                 }
             }
         }
@@ -624,7 +624,7 @@ private struct InfoPill: View {
 
     var body: some View {
         Label(title, systemImage: icon)
-            .font(.caption2)
+            .font(DS.Font.caption2())
             .fontWeight(.heavy)
             .lineLimit(1)
             .foregroundStyle(color)
@@ -641,10 +641,10 @@ private struct EmptyFeedState: View {
                 .font(.title2)
                 .foregroundStyle(DS.Color.positive)
             Text("Nothing active here")
-                .font(.headline)
+                .font(DS.Font.cardTitle())
                 .foregroundStyle(.white)
             Text("Try another filter or category.")
-                .font(.caption)
+                .font(DS.Font.caption())
                 .foregroundStyle(.white.opacity(0.56))
         }
         .frame(maxWidth: .infinity)

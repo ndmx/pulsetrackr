@@ -45,7 +45,7 @@ struct SettingsView: View {
                         .foregroundStyle(DS.Color.textSecondary)
                     Spacer()
                     Text(radiusLabel)
-                        .font(DS.Font.body().weight(.bold))
+                        .font(DS.Font.bodyBold())
                         .foregroundStyle(DS.Color.textPrimary)
                         .monospacedDigit()
                 }
@@ -140,7 +140,7 @@ struct SettingsView: View {
 
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Trusted contacts")
-                            .font(DS.Font.body().weight(.semibold))
+                            .font(DS.Font.bodyStrong())
                             .foregroundStyle(DS.Color.textPrimary)
                         Text(sosContactsDescription)
                             .font(DS.Font.caption())
@@ -247,7 +247,7 @@ struct SettingsSectionHeader: View {
 
     var body: some View {
         Text(title.uppercased())
-            .font(.caption2.weight(.bold))
+            .font(DS.Font.caption2Strong())
             .foregroundStyle(DS.Color.textTertiary)
             .kerning(1)
     }
@@ -270,7 +270,7 @@ private struct SettingsToggleRow: View {
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(label)
-                    .font(DS.Font.body().weight(.semibold))
+                    .font(DS.Font.bodyStrong())
                     .foregroundStyle(DS.Color.textPrimary)
                 Text(description)
                     .font(DS.Font.caption())
@@ -328,7 +328,7 @@ private struct PrecisionLocationRow: View {
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(title)
-                    .font(DS.Font.body().weight(.semibold))
+                    .font(DS.Font.bodyStrong())
                     .foregroundStyle(DS.Color.textPrimary)
                 Text(detail)
                     .font(DS.Font.caption())
@@ -342,7 +342,7 @@ private struct PrecisionLocationRow: View {
                         }
                     } label: {
                         Text("Open iOS Settings")
-                            .font(DS.Font.caption().weight(.bold))
+                            .font(DS.Font.label())
                     }
                     .buttonStyle(.plain)
                     .foregroundStyle(DS.Color.accent)

@@ -53,12 +53,12 @@ struct SOSOverlayView: View {
         VStack(alignment: .trailing, spacing: 6) {
             ZStack {
                 Circle()
-                    .fill(DS.Color.accent.opacity(isHolding ? 0.28 : 0.18))
+                    .fill(DS.Color.alert.opacity(isHolding ? 0.28 : 0.18))
                     .frame(width: isHolding ? 84 : 70, height: isHolding ? 84 : 70)
 
                 Circle()
                     .trim(from: 0, to: isHolding ? 1 : 0.18)
-                    .stroke(DS.Color.accent, style: StrokeStyle(lineWidth: 4, lineCap: .round))
+                    .stroke(DS.Color.alert, style: StrokeStyle(lineWidth: 4, lineCap: .round))
                     .frame(width: 72, height: 72)
                     .rotationEffect(.degrees(-90))
 
@@ -66,13 +66,13 @@ struct SOSOverlayView: View {
                     Image(systemName: "sos.circle.fill")
                         .font(.system(size: 26, weight: .heavy))
                     Text("SOS")
-                        .font(.caption2)
+                        .font(DS.Font.caption2())
                         .fontWeight(.heavy)
                 }
                 .foregroundStyle(.white)
                 .frame(width: 58, height: 58)
                 .background(.black.opacity(0.84), in: Circle())
-                .overlay(Circle().stroke(DS.Color.accent.opacity(0.80), lineWidth: 2))
+                .overlay(Circle().stroke(DS.Color.alert.opacity(0.80), lineWidth: 2))
             }
             .contentShape(Circle())
             .gesture(activationGesture)
@@ -81,7 +81,7 @@ struct SOSOverlayView: View {
             .accessibilityAddTraits(.isButton)
 
             Text(isHolding ? "Keep holding" : "Hold for SOS")
-                .font(.caption2)
+                .font(DS.Font.caption2())
                 .fontWeight(.bold)
                 .foregroundStyle(.white.opacity(0.82))
                 .padding(.horizontal, 9)
@@ -89,7 +89,7 @@ struct SOSOverlayView: View {
                 .background(.black.opacity(0.54), in: Capsule())
 
             Text("Alerts trusted contacts only")
-                .font(.caption2)
+                .font(DS.Font.caption2())
                 .fontWeight(.semibold)
                 .foregroundStyle(.white.opacity(0.68))
                 .padding(.horizontal, 9)
@@ -98,7 +98,7 @@ struct SOSOverlayView: View {
 
             if sosStore.activeTrustedContacts.isEmpty {
                 Text("No contacts set")
-                    .font(.caption2)
+                    .font(DS.Font.caption2())
                     .fontWeight(.bold)
                     .foregroundStyle(IncidentSeverity.high.tint)
                     .padding(.horizontal, 9)
@@ -113,22 +113,22 @@ struct SOSOverlayView: View {
             HStack(spacing: 9) {
                 Image(systemName: "sos.circle.fill")
                     .font(.title3)
-                    .foregroundStyle(DS.Color.accent)
+                    .foregroundStyle(DS.Color.alert)
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text("SOS active")
-                        .font(.headline)
+                        .font(DS.Font.cardTitle())
                         .fontWeight(.heavy)
                         .foregroundStyle(.white)
                     Text("Trusted contacts are being notified.")
-                        .font(.caption)
+                        .font(DS.Font.caption())
                         .fontWeight(.medium)
                         .foregroundStyle(.white.opacity(0.68))
                 }
             }
 
             Label("PulseTrackr does not automatically contact police, ambulance, or emergency services.", systemImage: "person.2.wave.2.fill")
-                .font(.caption2)
+                .font(DS.Font.caption2())
                 .fontWeight(.semibold)
                 .foregroundStyle(.white.opacity(0.68))
                 .fixedSize(horizontal: false, vertical: true)
@@ -146,13 +146,13 @@ struct SOSOverlayView: View {
 
             VStack(alignment: .leading, spacing: 7) {
                 Label(sosStore.uploadStatusText, systemImage: deliveryIcon)
-                    .font(.caption)
+                    .font(DS.Font.caption())
                     .fontWeight(.bold)
                     .foregroundStyle(deliveryColor)
 
                 if let lastRemoteError = sosStore.lastRemoteError {
                     Text(lastRemoteError)
-                        .font(.caption2)
+                        .font(DS.Font.caption2())
                         .foregroundStyle(.white.opacity(0.62))
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -167,7 +167,7 @@ struct SOSOverlayView: View {
                     isShowingRoute = true
                 } label: {
                     Label("Route", systemImage: "point.topleft.down.curvedto.point.bottomright.up")
-                        .font(.caption)
+                        .font(DS.Font.caption())
                         .fontWeight(.bold)
                         .frame(maxWidth: .infinity)
                 }
@@ -178,7 +178,7 @@ struct SOSOverlayView: View {
                         sosStore.retryQueuedEvents()
                     } label: {
                         Label("Retry", systemImage: "arrow.clockwise")
-                            .font(.caption)
+                            .font(DS.Font.caption())
                             .fontWeight(.bold)
                             .frame(maxWidth: .infinity)
                     }
@@ -191,7 +191,7 @@ struct SOSOverlayView: View {
                     pendingResolutionAction = .resolved
                 } label: {
                     Label("Resolve", systemImage: "checkmark.shield.fill")
-                        .font(.caption)
+                        .font(DS.Font.caption())
                         .fontWeight(.bold)
                         .frame(maxWidth: .infinity)
                 }
@@ -201,11 +201,11 @@ struct SOSOverlayView: View {
                     pendingResolutionAction = .falseAlarm
                 } label: {
                     Label("False alarm", systemImage: "xmark")
-                        .font(.caption)
+                        .font(DS.Font.caption())
                         .fontWeight(.bold)
                         .frame(maxWidth: .infinity)
                 }
-                .buttonStyle(SOSActionButtonStyle(tint: DS.Color.accent))
+                .buttonStyle(SOSActionButtonStyle(tint: DS.Color.alert))
             }
         }
         .padding(14)
@@ -213,7 +213,7 @@ struct SOSOverlayView: View {
         .background(.black.opacity(0.72), in: RoundedRectangle(cornerRadius: 18))
         .overlay(
             RoundedRectangle(cornerRadius: 18)
-                .stroke(DS.Color.accent.opacity(0.30), lineWidth: 1)
+                .stroke(DS.Color.alert.opacity(0.30), lineWidth: 1)
         )
         .shadow(color: .black.opacity(0.35), radius: 18, y: 12)
     }
@@ -239,14 +239,14 @@ struct SOSOverlayView: View {
     private var contactStrip: some View {
         if sosStore.activeTrustedContacts.isEmpty {
             Label("No trusted contacts. Location is still saved locally.", systemImage: "person.crop.circle.badge.exclamationmark")
-                .font(.caption)
+                .font(DS.Font.caption())
                 .fontWeight(.semibold)
                 .foregroundStyle(IncidentSeverity.high.tint)
                 .fixedSize(horizontal: false, vertical: true)
         } else {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Trusted group")
-                    .font(.caption2)
+                    .font(DS.Font.caption2())
                     .fontWeight(.heavy)
                     .textCase(.uppercase)
                     .foregroundStyle(.white.opacity(0.42))
@@ -258,13 +258,13 @@ struct SOSOverlayView: View {
                             .foregroundStyle(sosStore.alertedContactIDs.contains(contact.id) ? DS.Color.positive : .white.opacity(0.52))
                             .frame(width: 18)
                         Text(contact.displayName)
-                            .font(.caption)
+                            .font(DS.Font.caption())
                             .fontWeight(.semibold)
                             .foregroundStyle(.white.opacity(0.78))
                             .lineLimit(1)
                         Spacer()
                         Text(sosStore.alertedContactIDs.contains(contact.id) ? "alerted" : "ready")
-                            .font(.caption2)
+                            .font(DS.Font.caption2())
                             .fontWeight(.bold)
                             .foregroundStyle(sosStore.alertedContactIDs.contains(contact.id) ? DS.Color.positive : .white.opacity(0.46))
                     }
@@ -272,7 +272,7 @@ struct SOSOverlayView: View {
 
                 if sosStore.activeTrustedContacts.count > 3 {
                     Text("+\(sosStore.activeTrustedContacts.count - 3) more")
-                        .font(.caption2)
+                        .font(DS.Font.caption2())
                         .foregroundStyle(.white.opacity(0.46))
                 }
             }
@@ -308,7 +308,7 @@ struct SOSOverlayView: View {
 
     private func statusChip(icon: String, title: String) -> some View {
         Label(title, systemImage: icon)
-            .font(.caption2)
+            .font(DS.Font.caption2())
             .fontWeight(.bold)
             .lineLimit(1)
             .foregroundStyle(.white.opacity(0.82))
@@ -374,7 +374,7 @@ private struct SOSActionButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .foregroundStyle(tint == DS.Color.accent ? .white : .black)
+            .foregroundStyle(tint == DS.Color.alert ? .white : .black)
             .padding(.vertical, 9)
             .background(tint.opacity(configuration.isPressed ? 0.72 : 0.92), in: Capsule())
             .scaleEffect(configuration.isPressed ? 0.97 : 1)

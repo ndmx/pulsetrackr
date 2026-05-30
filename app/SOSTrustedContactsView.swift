@@ -204,7 +204,7 @@ private struct SOSTrustedContactRow: View {
     var body: some View {
         HStack(spacing: DS.Space.md) {
             Text(contact.initials)
-                .font(.caption.weight(.heavy))
+                .font(DS.Font.label())
                 .foregroundStyle(.white)
                 .frame(width: 38, height: 38)
                 .background(contact.isDeliverable ? DS.Color.accent : DS.Color.textTertiary, in: Circle())
@@ -212,7 +212,7 @@ private struct SOSTrustedContactRow: View {
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 7) {
                     Text(contact.displayName)
-                        .font(DS.Font.body().weight(.bold))
+                        .font(DS.Font.bodyBold())
                         .foregroundStyle(DS.Color.textPrimary)
                         .lineLimit(1)
 
@@ -229,7 +229,7 @@ private struct SOSTrustedContactRow: View {
                     .lineLimit(1)
 
                 Text(contact.channelSummary)
-                    .font(.caption2.weight(.semibold))
+                    .font(DS.Font.caption2Strong())
                     .foregroundStyle(contact.isDeliverable ? DS.Color.positive : IncidentSeverity.high.tint)
             }
 
@@ -318,7 +318,7 @@ private struct SOSTrustedContactEditorView: View {
 
             Toggle(isOn: $isActive) {
                 Label("Active during SOS", systemImage: "bell.fill")
-                    .font(DS.Font.body().weight(.semibold))
+                    .font(DS.Font.bodyStrong())
                     .foregroundStyle(DS.Color.textPrimary)
             }
             .tint(DS.Color.accent)
@@ -333,7 +333,7 @@ private struct SOSTrustedContactEditorView: View {
             ForEach(SOSTrustedContactChannel.allCases, id: \.self) { channel in
                 Toggle(isOn: channelBinding(channel)) {
                     Label(channel.label, systemImage: channel.iconName)
-                        .font(DS.Font.body().weight(.semibold))
+                        .font(DS.Font.bodyStrong())
                         .foregroundStyle(DS.Color.textPrimary)
                 }
                 .tint(DS.Color.accent)
@@ -427,7 +427,7 @@ private struct SOSMiniMetric: View {
                 .font(.system(.title3, design: .rounded, weight: .heavy))
                 .foregroundStyle(DS.Color.textPrimary)
             Text(label)
-                .font(.caption2.weight(.bold))
+                .font(DS.Font.caption2Strong())
                 .textCase(.uppercase)
                 .foregroundStyle(DS.Color.textTertiary)
         }

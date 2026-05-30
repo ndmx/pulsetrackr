@@ -63,7 +63,7 @@ struct IncidentDetailView: View {
 
             VStack(alignment: .leading, spacing: DS.Space.sm) {
                 Label(liveIncident.confidence.rawValue, systemImage: liveIncident.confidence.icon)
-                    .font(.caption.weight(.bold))
+                    .font(DS.Font.label())
                     .textCase(.uppercase)
                     .foregroundStyle(liveIncident.confidence.color)
                     .padding(.horizontal, DS.Space.sm)
@@ -71,7 +71,7 @@ struct IncidentDetailView: View {
                     .background(liveIncident.confidence.color.opacity(0.13), in: Capsule())
 
                 Text(liveIncident.title)
-                    .font(.system(.title2, design: .rounded, weight: .bold))
+                    .font(DS.Font.title())
                     .foregroundStyle(DS.Color.textPrimary)
                     .fixedSize(horizontal: false, vertical: true)
 
@@ -82,7 +82,7 @@ struct IncidentDetailView: View {
 
                 Label(liveIncident.alertTone, systemImage: "bell.and.waves.left.and.right.fill")
                     .font(DS.Font.label())
-                    .foregroundStyle(liveIncident.isHighRisk ? DS.Color.accent : DS.Color.textTertiary)
+                    .foregroundStyle(liveIncident.isHighRisk ? DS.Color.alert : DS.Color.textTertiary)
             }
         }
         .pulsePanel()
@@ -103,7 +103,7 @@ struct IncidentDetailView: View {
                             Image(systemName: signal.icon)
                                 .font(.subheadline)
                             Text(signal.label)
-                                .font(DS.Font.body().weight(.semibold))
+                                .font(DS.Font.bodyStrong())
                         }
                         .frame(maxWidth: .infinity, minHeight: 46)
                         .background(signal.color.opacity(0.14), in: RoundedRectangle(cornerRadius: DS.Radius.md, style: .continuous))
@@ -183,7 +183,7 @@ struct IncidentDetailView: View {
                     Spacer()
 
                     Text(row.value)
-                        .font(DS.Font.body().weight(.semibold))
+                        .font(DS.Font.bodyStrong())
                         .foregroundStyle(DS.Color.textPrimary)
                         .multilineTextAlignment(.trailing)
                 }

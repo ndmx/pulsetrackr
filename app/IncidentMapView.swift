@@ -135,10 +135,10 @@ struct IncidentMapView: View {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(locationTitle)
-                        .font(.headline)
+                        .font(DS.Font.cardTitle())
                         .foregroundStyle(.white)
                     Text("Immediate reports in your watch radius")
-                        .font(.subheadline)
+                        .font(DS.Font.body())
                         .foregroundStyle(.white.opacity(0.7))
                 }
                 Spacer()
@@ -242,11 +242,11 @@ private struct LiveStatusPill: View {
 
     var body: some View {
         Label("\(count)", systemImage: "exclamationmark.triangle.fill")
-            .font(.caption.weight(.bold))
+            .font(DS.Font.label())
             .foregroundStyle(.white)
             .padding(.horizontal, DS.Space.md)
             .padding(.vertical, DS.Space.sm)
-            .background(DS.Color.accent, in: Capsule())
+            .background(DS.Color.alert, in: Capsule())
     }
 }
 
@@ -257,11 +257,11 @@ private struct MapMetric: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(value)
-                .font(.title3)
+                .font(DS.Font.title3())
                 .fontWeight(.heavy)
                 .foregroundStyle(.white)
             Text(label)
-                .font(.caption2)
+                .font(DS.Font.caption2())
                 .textCase(.uppercase)
                 .fontWeight(.semibold)
                 .foregroundStyle(.white.opacity(0.58))
@@ -285,25 +285,25 @@ private struct FeaturedIncidentCard: View {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 8) {
                     Text(incident.subtype.label)
-                        .font(.caption2)
+                        .font(DS.Font.caption2())
                         .textCase(.uppercase)
                         .fontWeight(.heavy)
                         .foregroundStyle(incident.category.color)
                     Text(incident.confidence.rawValue)
-                        .font(.caption2)
+                        .font(DS.Font.caption2())
                         .fontWeight(.bold)
                         .foregroundStyle(incident.confidence.color)
                     Text(incident.reportedAt, style: .relative)
-                        .font(.caption2)
+                        .font(DS.Font.caption2())
                         .foregroundStyle(.white.opacity(0.54))
                 }
                 Text(incident.title)
-                    .font(.subheadline)
+                    .font(DS.Font.body())
                     .fontWeight(.bold)
                     .foregroundStyle(.white)
                     .lineLimit(2)
                 Text(incident.neighborhood)
-                    .font(.caption)
+                    .font(DS.Font.caption())
                     .foregroundStyle(.white.opacity(0.64))
             }
 

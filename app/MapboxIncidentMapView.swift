@@ -144,7 +144,7 @@ struct MapboxIncidentMapView: View {
                 } label: {
                     HStack(spacing: 8) {
                         Label(selectedCategory?.label ?? "Incidents", systemImage: "square.3.layers.3d.down.right")
-                            .font(.title3)
+                            .font(DS.Font.title3())
                             .fontWeight(.bold)
 
                         Image(systemName: isShowingCategoryFilters ? "chevron.up" : "chevron.down")
@@ -336,7 +336,7 @@ private struct MapboxMetric: View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text(value)
-                    .font(.system(size: 34, weight: .medium, design: .rounded))
+                    .font(.custom(DS.Font.bodyMedium, size: 34, relativeTo: .title))
                     .foregroundStyle(.white)
                 Circle()
                     .fill(accent)
@@ -344,7 +344,7 @@ private struct MapboxMetric: View {
             }
 
             Text(detail.map { "\(label) • \($0)" } ?? label)
-                .font(.caption)
+                .font(DS.Font.caption())
                 .fontWeight(.medium)
                 .foregroundStyle(.white.opacity(0.72))
         }
@@ -365,13 +365,13 @@ private struct MapboxFeaturedIncident: View {
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(incident.title)
-                    .font(.subheadline)
+                    .font(DS.Font.body())
                     .fontWeight(.bold)
                     .foregroundStyle(.white)
                     .lineLimit(1)
 
                 Text("\(incident.confidence.rawValue) • \(incident.neighborhood)")
-                    .font(.caption)
+                    .font(DS.Font.caption())
                     .foregroundStyle(incident.confidence.color.opacity(0.92))
                     .lineLimit(1)
             }

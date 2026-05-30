@@ -5,6 +5,7 @@ struct pulsetrackrApp: App {
     init() {
         MapboxBootstrap.configureFromBundle()
         FirebaseBootstrap.configureIfAvailable()
+        PulseAppearance.apply()
     }
 
     var body: some Scene {
