@@ -467,13 +467,14 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = app/pulsetrackr.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 118;
+				CURRENT_PROJECT_VERSION = 201;
 				DEVELOPMENT_TEAM = 4ZSXLWH9W2;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Info.plist;
 				INFOPLIST_KEY_NSContactsUsageDescription = "PulseTrackr can import a trusted contact you choose for SOS alerts.";
 				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "PulseTrackr uses location to show nearby reports and, when you activate SOS, share exact location updates with your trusted contacts.";
+				INFOPLIST_KEY_NSCameraUsageDescription = "PulseTrackr uses the camera when you choose to take a photo for an incident report.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "PulseTrackr uses the microphone when you choose to record a voice note for an incident report.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
@@ -484,7 +485,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.1.8;
+				MARKETING_VERSION = 2.0.1;
 				PRODUCT_BUNDLE_IDENTIFIER = org.pulsetracker.pulsetrackr.pulsetrackr;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -500,13 +501,14 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = app/pulsetrackr.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 118;
+				CURRENT_PROJECT_VERSION = 201;
 				DEVELOPMENT_TEAM = 4ZSXLWH9W2;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Info.plist;
 				INFOPLIST_KEY_NSContactsUsageDescription = "PulseTrackr can import a trusted contact you choose for SOS alerts.";
 				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "PulseTrackr uses location to show nearby reports and, when you activate SOS, share exact location updates with your trusted contacts.";
+				INFOPLIST_KEY_NSCameraUsageDescription = "PulseTrackr uses the camera when you choose to take a photo for an incident report.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "PulseTrackr uses the microphone when you choose to record a voice note for an incident report.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
@@ -517,7 +519,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.1.8;
+				MARKETING_VERSION = 2.0.1;
 				PRODUCT_BUNDLE_IDENTIFIER = org.pulsetracker.pulsetrackr.pulsetrackr;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -531,11 +533,11 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 118;
+				CURRENT_PROJECT_VERSION = 201;
 				DEVELOPMENT_TEAM = 4ZSXLWH9W2;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-				MARKETING_VERSION = 1.1.8;
+				MARKETING_VERSION = 2.0.1;
 				PRODUCT_BUNDLE_IDENTIFIER = org.pulsetracker.pulsetrackr.pulsetrackrTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = NO;
@@ -550,11 +552,11 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 118;
+				CURRENT_PROJECT_VERSION = 201;
 				DEVELOPMENT_TEAM = 4ZSXLWH9W2;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-				MARKETING_VERSION = 1.1.8;
+				MARKETING_VERSION = 2.0.1;
 				PRODUCT_BUNDLE_IDENTIFIER = org.pulsetracker.pulsetrackr.pulsetrackrTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = NO;
@@ -568,10 +570,10 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 118;
+				CURRENT_PROJECT_VERSION = 201;
 				DEVELOPMENT_TEAM = 4ZSXLWH9W2;
 				GENERATE_INFOPLIST_FILE = YES;
-				MARKETING_VERSION = 1.1.8;
+				MARKETING_VERSION = 2.0.1;
 				PRODUCT_BUNDLE_IDENTIFIER = org.pulsetracker.pulsetrackr.pulsetrackrUITests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = NO;
@@ -585,10 +587,10 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 118;
+				CURRENT_PROJECT_VERSION = 201;
 				DEVELOPMENT_TEAM = 4ZSXLWH9W2;
 				GENERATE_INFOPLIST_FILE = YES;
-				MARKETING_VERSION = 1.1.8;
+				MARKETING_VERSION = 2.0.1;
 				PRODUCT_BUNDLE_IDENTIFIER = org.pulsetracker.pulsetrackr.pulsetrackrUITests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = NO;

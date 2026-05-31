@@ -10,6 +10,7 @@ struct ContentView: View {
     @AppStorage(AppStorageKey.launchLastSeenAt) private var launchLastSeenAt = 0.0
     @AppStorage(AppStorageKey.launchLastSeenVersion) private var launchLastSeenVersion = ""
     @AppStorage(AppStorageKey.watchRadius) private var watchRadius = 3.0
+    @AppStorage(AppStorageKey.lightModeEnabled) private var lightModeEnabled = false
 
     private let welcomeResetInterval: TimeInterval = 30 * 24 * 60 * 60
 
@@ -24,6 +25,11 @@ struct ContentView: View {
                     .zIndex(1)
             }
         }
+        // Declare the scheme at the root so the very first frame is dark (no
+        // system-light flash on launch). Default is dark; the Settings toggle
+        // opts into light. The immersive map/feed screens keep their own dark
+        // override regardless, since they're built on a dark map surface.
+        .preferredColorScheme(lightModeEnabled ? .light : .dark)
         .task {
             try? await Task.sleep(for: .seconds(1.8))
             withAnimation(.easeInOut(duration: 0.35)) {
@@ -51,11 +57,13 @@ struct ContentView: View {
     }
 
     private func markWelcomeSeen() {
-        withAnimation(.easeInOut(duration: 0.45)) {
-            hasSeenLaunch = true
-            launchLastSeenAt = Date().timeIntervalSince1970
-            launchLastSeenVersion = currentAppVersion
-        }
+        // Set the flags directly (no withAnimation): the LaunchView runs a
+        // `.repeatForever` pulse, and animating the LaunchView → mainTabs identity
+        // swap while that transaction is live can wedge the transition and freeze
+        // the UI. A plain state change swaps in the tabs immediately and reliably.
+        hasSeenLaunch = true
+        launchLastSeenAt = Date().timeIntervalSince1970
+        launchLastSeenVersion = currentAppVersion
     }
 
     private var currentAppVersion: String {

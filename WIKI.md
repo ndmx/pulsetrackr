@@ -140,22 +140,23 @@ to Building fire, not Market fire. No new subtypes were added. Covered by
 |------|------|-----------|-------|--------|
 | `pulsetrackrApp.swift` | App entry | `pulsetrackrApp` | — | calls `FirebaseBootstrap` |
 | `FirebaseBootstrap.swift` | Firebase init guard | `FirebaseBootstrap` | Bundle plist | `FirebaseApp.configure()` |
-| `ContentView.swift` | Root tab view; drives geo-region subscription from location + radius | `ContentView`, `AppTab` | `@AppStorage hasSeenLaunch/watchRadius`, `LocationManager` | calls `IncidentStore.updateObservedRegion`, `SOSStore.record` |
-| `LaunchView.swift` | Onboarding splash | `LaunchView`, `FeatureRow` | — | `@AppStorage hasSeenLaunch` via callback |
+| `ContentView.swift` | Root tab view; drives geo-region subscription from location + radius; sets the app-wide color scheme | `ContentView`, `AppTab` | `@AppStorage hasSeenLaunch/launchLastSeenAt/launchLastSeenVersion/watchRadius/lightModeEnabled`, `LocationManager` | calls `IncidentStore.updateObservedRegion`, `SOSStore.record`; `@AppStorage` welcome-seen keys |
+| `LaunchView.swift` | Opening splash (`OpeningSplashView`) + first-run welcome (`LaunchView`) | `OpeningSplashView`, `LaunchView`, `FeatureRow` | — | `@AppStorage hasSeenLaunch` (+ reset keys) via callback |
 | `PulseMapView.swift` | Map tab facade | `PulseMapView` | — | — |
 | `MapboxIncidentMapView.swift` | Map (Mapbox) | `MapboxIncidentMapView` + 4 private views | `IncidentStore`, `LocationManager`, `@AppStorage watchRadius/urgentAlerts/communityAlerts` | — |
 | `IncidentMapView.swift` | Map (Apple) | `IncidentMapView` + 5 private views | `IncidentStore`, `LocationManager`, `@AppStorage watchRadius/urgentAlerts/communityAlerts` | — |
 | `FeedView.swift` | Feed tab + sheet | `FeedView` + 9 private views | `IncidentStore`, `LocationManager`, `@AppStorage watchRadius/urgentAlerts/communityAlerts` | — |
 | `FeedMapboxLayer.swift` | Mapbox layer for Feed | `FeedMapboxLayer`, `FeedMapboxPin` | `[Incident]` passed in | — |
 | `IncidentDetailView.swift` | Incident detail | `IncidentDetailView` + `detailPanel()` modifier | `IncidentStore.incident(withID:)` | `IncidentStore.record(_:for:)` |
-| `ReportIncidentView.swift` | Report new incident — **single unified form** (text + optional photo + optional voice + ongoing/past toggle, all submitted together) | `ReportIncidentView` + private views (`ReportComposer`, `StatusPill`, `SuggestionPanel`, …) | `LocationManager`, `IncidentClassifier`, `@AppStorage useApproximateLocation` | `IncidentStore.addIncident(...)` |
-| `SettingsView.swift` | Settings | `SettingsView` + private views incl. `PrecisionLocationRow` | `@AppStorage` (4 keys), `LocationManager` (auth + accuracy), `SOSStore` | `@AppStorage` (4 keys) |
+| `ReportIncidentView.swift` | Report new incident — **single unified form** (text + optional photo + optional voice + ongoing/past toggle, all submitted together). Photo evidence can be **taken with the camera or chosen from the library** (`CameraPicker` + `PhotosPicker`) | `ReportIncidentView` + private views (`ReportComposer`, `CameraPicker`, `StatusPill`, `SuggestionPanel`, …) | `LocationManager`, `IncidentClassifier`, `@AppStorage useApproximateLocation` | `IncidentStore.addIncident(...)` |
+| `SettingsView.swift` | Settings (incl. Appearance / light-mode toggle) | `SettingsView` + private views incl. `PrecisionLocationRow` | `@AppStorage` (5 keys), `LocationManager` (auth + accuracy), `SOSStore` | `@AppStorage` (5 keys) |
 | `Incident.swift` | Domain model | `Incident`, `IncidentCategory`, `IncidentSubtype`, `IncidentSeverity`, `IncidentStatus`, `IncidentConfidence`, `CommunitySignal`, `IncidentUpdate` + `CLLocationCoordinate2D` extensions (`pulseDefaultCenter`, `isValid`, locale-aware distance) | — | — (value types) |
 | `IncidentStore.swift` | State manager + geo-region subscription | `IncidentStore`; `Incident.seedIncidents` is **`#if DEBUG` only** (previews) | `SafetyIncidentRemoteStore` (optional) | self: in-place O(1) mutation via `lookup[UUID:Int]`; `@Published lastSyncError` |
 | `SafetyIncidentRemoteStore.swift` | Firebase integration; geohash-bounded feed | `SafetyIncidentRemoteStore`, `SafetyIncidentRemoteStoreError` | Firestore `safety_incidents_public` via per-prefix `geohash` range listeners | Functions `submit_incident` + `record_incident_signal` (no direct Firestore writes); Storage evidence |
 | `Geohash.swift` | Geohash encode + neighbour/covering-cell + radius→precision | `Geohash` (enum) | — | — (pure) |
 | `MapDefaults.swift` | Shared initial-camera logic | `MapDefaults` | `LocationManager.lastKnownCoordinate` | — |
 | `SharedComponents.swift` | Reusable UI: `cardPanel()`, `CategoryChip`, `LocationPromptCard` | view modifier + 2 views | `CLAuthorizationStatus` | opens Settings / requests permission |
+| `DesignSystem.swift` | Design tokens + brand (the `DS` enum: adaptive `DS.Color`, `DS.Font`, spacing/radius), shared `pulsePanel()`, button/field styles, severity ramp, and `PulseAppearance.apply()` for UIKit nav/tab chrome | `DS`, `PulseAppearance`, `DSPrimaryButtonStyle`, `DSSecondaryButtonStyle`, `DSSectionHeader`, `DSSeverityBadge` | `UITraitCollection` (adaptive light/dark colors) | UIKit appearance proxies |
 | `AppStorageKey.swift` | Centralized `@AppStorage` key names | `AppStorageKey` enum | — | — |
 | `SOSStore.swift` | SOS session/trail state machine + upload queue | `SOSStore` | `SOSRemoteStore`, `SOSTrustedContactStore`, `SOSPrivacyPolicy` | enqueues + syncs SOS events; `@Published` errors |
 | `Localizable.xcstrings` | String Catalog (en source; es example) | — | resolved by `Text`/`LocalizedStringKey` | — |
@@ -236,6 +237,17 @@ optional voice note, and an "Is this still happening?" choice (Happening now →
 `status .active`; Already happened → `.watching`). The classifier suggestion panel
 sits beneath and can be accepted or overridden. All filled inputs are merged into a
 single `addIncident` call.
+
+The photo control offers **two sources**: *Take Photo* (in-app camera via
+`CameraPicker`, a thin `UIImagePickerController` wrapper) and *Choose from Library*
+(`PhotosPicker`). A confirmation dialog picks between them; on devices/simulators
+without a camera (`CameraPicker.isAvailable == false`) it falls straight through to
+the library. Camera capture sets `selectedPhotoData` directly (bypassing the
+`PhotosPicker → loadPhoto` path) and intentionally leaves `selectedPhotoItem`
+untouched, since assigning it `nil` would re-fire `loadPhoto(nil)` and clear the
+photo. The camera path requires `NSCameraUsageDescription`, set via
+`INFOPLIST_KEY_NSCameraUsageDescription` in both build configs; the library path
+needs no usage string (`PhotosPicker` runs out-of-process).
 
 ```
 User types title/summary
@@ -326,15 +338,40 @@ These keys are read/written across multiple files. Changing a key name requires 
 | Key | Type | Default | Read by | Written by |
 |-----|------|---------|---------|------------|
 | `hasSeenLaunch` | Bool | false | `ContentView` | `ContentView` (via `LaunchView` callback) |
+| `launchLastSeenAt` | Double | 0 | `ContentView` | `ContentView` (on welcome dismiss) |
+| `launchLastSeenVersion` | String | "" | `ContentView` | `ContentView` (on welcome dismiss) |
 | `watchRadius` | Double | 3.0 | `FeedView`, `IncidentMapView`, `MapboxIncidentMapView`, `SettingsView` | `SettingsView` |
 | `urgentAlerts` | Bool | true | `FeedView`, `IncidentMapView`, `MapboxIncidentMapView`, `SettingsView` | `SettingsView` |
 | `communityAlerts` | Bool | true | `FeedView`, `IncidentMapView`, `MapboxIncidentMapView`, `SettingsView` | `SettingsView` |
 | `useApproximateLocation` | Bool | true | `ReportIncidentView`, `SettingsView` | `SettingsView` |
+| `lightModeEnabled` | Bool | false | `ContentView`, `SettingsView` | `SettingsView` |
 | `lastKnownLatitude` | Double | — | `LocationManager.lastKnownCoordinate` (→ `MapDefaults`, map camera init) | `LocationManager` (on each GPS fix) |
 | `lastKnownLongitude` | Double | — | `LocationManager.lastKnownCoordinate` (→ `MapDefaults`, map camera init) | `LocationManager` (on each GPS fix) |
 
 > Key names are centralized in `AppStorageKey.swift`. `watchRadius` is stored
 > canonically in **km**; the Settings label converts to mi for imperial locales.
+
+### Welcome screen re-display
+
+The first-run welcome (`LaunchView`) is gated by three keys, not just
+`hasSeenLaunch`. `ContentView.shouldShowWelcome` re-shows it when the user has never
+seen it, when `launchLastSeenVersion` ≠ the current `version-build`, or when
+`launchLastSeenAt` is older than **30 days** (`welcomeResetInterval`). Dismissal
+(`markWelcomeSeen`) sets all three **without** wrapping the `LaunchView → mainTabs`
+swap in `withAnimation` — animating that view-identity change while `LaunchView`'s
+`.repeatForever` pulse is live could wedge the transition and freeze the UI.
+
+### Appearance (dark-default theming)
+
+`ContentView` declares `.preferredColorScheme(lightModeEnabled ? .light : .dark)` at
+the **root**, so the first rendered frame is dark — there is no system-light flash on
+launch. `lightModeEnabled` defaults to `false` (dark) and is toggled from Settings →
+Appearance. The immersive **map and feed keep their own `.preferredColorScheme(.dark)`
+override** (they sit on a dark map surface with literal black/white chrome), so the
+light theme applies to the adaptive surfaces — Settings, Report, Incident detail, SOS
+— while the map stays dark by design. Adaptive colors live in `DS.Color` (see
+`DesignSystem.swift`); the UIKit nav/tab chrome adapts via
+`UI*Appearance.configureWithDefaultBackground()` in `PulseAppearance.apply()`.
 
 ---
 

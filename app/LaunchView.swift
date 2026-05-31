@@ -39,6 +39,7 @@ struct OpeningSplashView: View {
                         .font(DS.Font.display(40, relativeTo: .largeTitle))
                         .foregroundStyle(.white.opacity(0.50))
                 }
+                .tracking(-0.8)
                 .opacity(wordmarkOpacity)
             }
         }
@@ -133,35 +134,36 @@ struct LaunchView: View {
                     .font(DS.Font.display(48, relativeTo: .largeTitle))
                     .foregroundStyle(.white.opacity(0.48))
             }
+            .tracking(-1.0)
 
-            Text("See what's happening in your area\nbefore you leave home.")
+            Text("Know what's happening nearby\nbefore you head out.")
                 .font(DS.Font.body())
                 .fontWeight(.medium)
                 .foregroundStyle(.white.opacity(0.56))
                 .multilineTextAlignment(.center)
-                .lineSpacing(5)
+                .lineSpacing(3)
         }
     }
 
     private var featureList: some View {
-        VStack(alignment: .leading, spacing: 22) {
+        VStack(alignment: .leading, spacing: 18) {
             FeatureRow(
                 icon: "map.fill",
                 color: DS.Color.textSecondary,
                 title: "Live incident map",
-                description: "Active reports from your community, updated in real time"
+                description: "Real-time reports from your community"
             )
             FeatureRow(
                 icon: "bell.and.waves.left.and.right.fill",
                 color: DS.Color.accent,
                 title: "Report what you see",
-                description: "Attach a photo, record audio, mark it live, or type — takes under 20 seconds"
+                description: "Photo, audio, or a quick note in under 20 seconds"
             )
             FeatureRow(
                 icon: "location.circle.fill",
                 color: DS.Color.positive,
                 title: "Your location stays private",
-                description: "The map shows areas only — your exact spot is never shared"
+                description: "The map shows areas only — never your exact spot"
             )
         }
     }

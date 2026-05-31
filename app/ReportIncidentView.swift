@@ -34,6 +34,19 @@ struct ReportIncidentView: View {
         IncidentSubtype.subtypes(for: category)
     }
 
+    /// Clamp the Type picker to a value that is always present in
+    /// `availableSubtypes`. When `category` changes, `subtype` can briefly hold a
+    /// value from the previous category for one render pass (before
+    /// `onChange(of: category)` resets it), which makes SwiftUI log "selection …
+    /// does not have an associated tag". Resolving to a valid member here keeps
+    /// the picker selection and its tags in sync every frame.
+    private var subtypeSelection: Binding<IncidentSubtype> {
+        Binding(
+            get: { availableSubtypes.contains(subtype) ? subtype : (availableSubtypes.first ?? subtype) },
+            set: { subtype = $0 }
+        )
+    }
+
     private var canSubmit: Bool {
         let hasDescription = title.trimmingCharacters(in: .whitespacesAndNewlines).count >= 4 &&
             summary.trimmingCharacters(in: .whitespacesAndNewlines).count >= 10
@@ -151,7 +164,7 @@ struct ReportIncidentView: View {
                     }
                     .pickerStyle(.menu)
 
-                    Picker("Type", selection: $subtype) {
+                    Picker("Type", selection: subtypeSelection) {
                         ForEach(availableSubtypes) { subtype in
                             Label(subtype.label, systemImage: subtype.icon)
                                 .tag(subtype)
@@ -334,8 +347,9 @@ private struct ReportHero: View {
         VStack(alignment: .leading, spacing: DS.Space.md) {
             Text("Report what is happening")
                 .font(DS.Font.display(30, relativeTo: .title2))
+                .tracking(-0.6)
                 .foregroundStyle(DS.Color.textPrimary)
-            Text("Show it, say it, or type it. Classification happens after.")
+            Text("Show it, say it, or type it.")
                 .font(DS.Font.body())
                 .foregroundStyle(DS.Color.textSecondary)
 
@@ -364,6 +378,10 @@ private struct ReportComposer: View {
     var isLoadingPhoto: Bool
     @ObservedObject var voiceRecorder: VoiceNoteRecorder
     var focusedField: FocusState<ReportField?>.Binding
+
+    @State private var showPhotoSourceDialog = false
+    @State private var showCamera = false
+    @State private var showLibraryPicker = false
 
     // One form: describe it, say whether it's ongoing, and optionally add a photo
     // and/or a voice note — all submitted together.
@@ -477,15 +495,41 @@ private struct ReportComposer: View {
                     }
             }
 
-            PhotosPicker(selection: $selectedPhotoItem, matching: .images) {
+            Button {
+                // Camera is unavailable on Simulator and on devices without one —
+                // fall straight through to the library there.
+                if CameraPicker.isAvailable {
+                    showPhotoSourceDialog = true
+                } else {
+                    showLibraryPicker = true
+                }
+            } label: {
                 EvidenceAttachLabel(
-                    title: selectedPhotoData == nil ? "Choose photo" : "Change photo",
-                    subtitle: isLoadingPhoto ? "Loading selected image..." : "Adds a photo evidence note to this report",
+                    title: selectedPhotoData == nil ? "Add photo" : "Change photo",
+                    subtitle: isLoadingPhoto ? "Loading selected image..." : "Take a photo or choose one from your library",
                     icon: selectedPhotoData == nil ? "photo.badge.plus" : "checkmark.circle.fill",
                     color: selectedPhotoData == nil ? DS.Color.textSecondary : DS.Color.positive
                 )
             }
             .buttonStyle(.plain)
+        }
+        .confirmationDialog("Add a photo", isPresented: $showPhotoSourceDialog, titleVisibility: .visible) {
+            Button("Take Photo") { showCamera = true }
+            Button("Choose from Library") { showLibraryPicker = true }
+            Button("Cancel", role: .cancel) { }
+        }
+        .photosPicker(isPresented: $showLibraryPicker, selection: $selectedPhotoItem, matching: .images)
+        .fullScreenCover(isPresented: $showCamera) {
+            CameraPicker { image in
+                // Camera capture bypasses the PhotosPicker pipeline (loadPhoto):
+                // set the data directly. Leave selectedPhotoItem untouched —
+                // assigning it nil would fire loadPhoto(nil) and clear this photo.
+                if let data = image.jpegData(compressionQuality: 0.8) {
+                    selectedPhotoData = data
+                    hasMediaEvidence = true
+                }
+            }
+            .ignoresSafeArea()
         }
     }
 
@@ -606,6 +650,44 @@ private struct LabeledReportField: View {
             RoundedRectangle(cornerRadius: DS.Radius.md, style: .continuous)
                 .stroke(DS.Color.hairline, lineWidth: DS.Stroke.hairline)
         )
+    }
+}
+
+/// Thin wrapper over `UIImagePickerController` for in-app camera capture —
+/// `PhotosPicker` only reads the library, so taking a new photo needs this.
+private struct CameraPicker: UIViewControllerRepresentable {
+    static var isAvailable: Bool { UIImagePickerController.isSourceTypeAvailable(.camera) }
+
+    var onCapture: (UIImage) -> Void
+
+    func makeUIViewController(context: Context) -> UIImagePickerController {
+        let picker = UIImagePickerController()
+        picker.sourceType = .camera
+        picker.delegate = context.coordinator
+        return picker
+    }
+
+    func updateUIViewController(_ uiViewController: UIImagePickerController, context: Context) { }
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    final class Coordinator: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
+        let parent: CameraPicker
+        init(_ parent: CameraPicker) { self.parent = parent }
+
+        func imagePickerController(
+            _ picker: UIImagePickerController,
+            didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]
+        ) {
+            if let image = info[.originalImage] as? UIImage {
+                parent.onCapture(image)
+            }
+            picker.dismiss(animated: true)
+        }
+
+        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
+            picker.dismiss(animated: true)
+        }
     }
 }
 

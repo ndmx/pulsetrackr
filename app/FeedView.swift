@@ -206,6 +206,7 @@ struct FeedView: View {
             VStack(alignment: .leading, spacing: 5) {
                 Text(headline)
                     .font(DS.Font.display(34, relativeTo: .largeTitle))
+                    .tracking(-0.7)
                     .foregroundStyle(priorityCount > 0 ? DS.Color.alert : DS.Color.positive)
                     .lineLimit(2)
 
@@ -215,7 +216,9 @@ struct FeedView: View {
                     .foregroundStyle(.white.opacity(0.70))
             }
             .opacity(sheetPosition == .full ? 0 : 1)
-            .padding(.bottom, min(sheetHeight - 15, 420))
+            // Sit a hair above the sheet top (sheetHeight) so the second line
+            // clears the translucent sheet instead of tucking beneath it.
+            .padding(.bottom, min(sheetHeight + 10, 420))
         }
         .padding(.horizontal, 18)
         .padding(.top, 18)
