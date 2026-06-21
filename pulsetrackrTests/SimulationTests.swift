@@ -158,7 +158,15 @@ struct SimulationTests {
 
     // MARK: Scale: 10,000
 
-    @Test("10,000 simultaneous incidents")
+    // Heavy benchmark (~minutes): the synthetic bulk-add path is O(n²) because each
+    // addIncident re-sorts the active feed. Realistic flows add one incident at a time
+    // (or batch via the listener, which sorts once), so this only stresses the harness.
+    // Disabled in the default/CI suite — where it would hog the MainActor and starve
+    // other @MainActor tests — and run on demand via RUN_SIMULATION_BENCHMARKS=1.
+    @Test(
+        "10,000 simultaneous incidents",
+        .enabled(if: ProcessInfo.processInfo.environment["RUN_SIMULATION_BENCHMARKS"] != nil)
+    )
     @MainActor func simulate10000() {
         let report = simulate(scale: 10_000)
         print(report)

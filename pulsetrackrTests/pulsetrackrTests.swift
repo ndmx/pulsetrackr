@@ -248,6 +248,12 @@ struct IncidentStoreAlertFilterTests {
         UserDefaults.standard.removeObject(forKey: hiddenIncidentIDsKey)
     }
 
+    private var noRadiusFilter: CLLocationCoordinate2D? {
+        // Local queued reports do not publish a map coordinate until the backend
+        // reveals a k-anonymous H3 cell. These tests isolate alert-toggle behavior.
+        nil
+    }
+
     @Test @MainActor func highRiskCommunityCategoryUsesUrgentToggle() {
         resetHiddenIncidents()
         let store = IncidentStore(remoteStore: nil)
@@ -265,7 +271,7 @@ struct IncidentStoreAlertFilterTests {
             urgentAlerts: true,
             communityAlerts: false,
             watchRadius: 15,
-            near: userCoordinate
+            near: noRadiusFilter
         )
 
         #expect(visible.count == 1)
@@ -288,7 +294,7 @@ struct IncidentStoreAlertFilterTests {
             urgentAlerts: false,
             communityAlerts: true,
             watchRadius: 15,
-            near: userCoordinate
+            near: noRadiusFilter
         )
 
         #expect(visible.isEmpty)
@@ -311,13 +317,13 @@ struct IncidentStoreAlertFilterTests {
             urgentAlerts: true,
             communityAlerts: false,
             watchRadius: 15,
-            near: userCoordinate
+            near: noRadiusFilter
         )
         let visible = store.nearbyIncidents(
             urgentAlerts: true,
             communityAlerts: true,
             watchRadius: 15,
-            near: userCoordinate
+            near: noRadiusFilter
         )
 
         #expect(hidden.isEmpty)
@@ -784,11 +790,11 @@ struct IncidentStoreTests {
         #expect(added.subtype.category == .fire)
     }
 
-    @Test @MainActor func addIncidentOffsetsPublicCoordinateFromExact() {
+    @Test @MainActor func addIncidentKeepsPublicCoordinateNilUntilBackendReveal() {
         let store = IncidentStore()
         let exact = CLLocationCoordinate2D(latitude: 6.5244, longitude: 3.3792)
         store.addIncident(
-            title: "Offset test",
+            title: "Privacy reveal test",
             summary: "",
             category: .community,
             subtype: .localWarning,
@@ -797,13 +803,9 @@ struct IncidentStoreTests {
             reporterCoordinate: exact
         )
         let added = store.incidents.last!
-        let pub = added.coordinate!
-        let latDiff = abs(pub.latitude - exact.latitude)
-        let lonDiff = abs(pub.longitude - exact.longitude)
-        // Should differ (fuzzing applied), but stay within roughly 300 m
-        #expect(latDiff > 0 || lonDiff > 0)
-        #expect(latDiff < 0.005)   // ~550 m max latitude
-        #expect(lonDiff < 0.005)
+        #expect(added.reporterCoordinate?.latitude == exact.latitude)
+        #expect(added.reporterCoordinate?.longitude == exact.longitude)
+        #expect(added.coordinate == nil)
     }
 
     // MARK: incident(withID:)
