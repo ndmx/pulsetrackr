@@ -34,8 +34,9 @@ ContentView (root)
 
 Data Layer
   ├── Incident.swift          → domain model (all enums + struct; optional coordinate)
-  ├── IncidentStore           → @MainActor ObservableObject, CRUD, geo-region subscription
-  ├── SafetyIncidentRemoteStore → Firestore geohash listeners + Functions submit/signal/query support
+  ├── IncidentStore           → @MainActor ObservableObject, CRUD, geo-region subscription; routes writes through OutboxQueue; uses shared ContractDTO.applySignal
+  ├── OutboxQueue             → durable client outbox (actor); reports/signals/SOS survive app kill, drained on launch/foreground
+  ├── SafetyIncidentRemoteStore → Firestore geohash listeners + query_incidents_h3 callable (hybrid); decodes via generated ContractDTO
   ├── Geohash.swift           → standard geohash encode + neighbour/covering-cell logic for client listeners
   ├── SOSRemoteStore / SOSStore → Firebase Functions SOS activate/update/resolve + app-contact invites
   ├── SOSTrustedContact       → local trusted-contact model + Keychain helper + app route payload
@@ -44,10 +45,13 @@ Data Layer
   ├── LocationManager         → shared CLLocationManager wrapper (persists last-known)
   └── MapDefaults             → shared initial-camera logic (last-known / world view)
 
+Shared Contract
+  └── @pulsetrackr/contract   → Zod single source of truth (payloads + incident state machine); codegen → Swift ContractDTO + TS validators + API docs
+
 External
   ├── Firebase Auth           → anonymous sign-in before submissions
   ├── Firebase Firestore      → safety_incidents_public plus private reports/counters/SOS/audit ledgers
-  ├── Firebase Functions      → submit/signal/query incident callables + scheduled counter rollups + SOS/app-contact/legal callables
+  ├── Firebase Functions      → strict-TypeScript bounded contexts (incidents/sos/disclosure/notifications/moderation/claims); incident + scheduled-rollup + H3-query + SOS/legal/claim callables + Cloud Tasks worker
   ├── Firebase Storage        → incident photo/voice evidence, scoped to reporter uid
   ├── Twilio                  → optional trusted-contact SMS, voice, email, and STOP/START webhook
   └── Mapbox Maps SDK         → conditional compile (#if canImport(MapboxMaps))
@@ -153,8 +157,9 @@ to Building fire, not Market fire. No new subtypes were added. Covered by
 | `IncidentEvidenceAttachment.swift` | Evidence upload value types | `IncidentEvidenceAttachment`, `UploadedIncidentEvidence` | photo/voice `Data` | Functions payload metadata after Storage upload |
 | `SettingsView.swift` | Settings (incl. Appearance / light-mode toggle) | `SettingsView` + private views incl. `PrecisionLocationRow` | `@AppStorage` (5 keys), `LocationManager` (auth + accuracy), `SOSStore` | `@AppStorage` (5 keys) |
 | `Incident.swift` | Domain model | `Incident`, `IncidentCategory`, `IncidentSubtype`, `IncidentSeverity`, `IncidentStatus`, `IncidentConfidence`, `CommunitySignal`, `IncidentUpdate` + `CLLocationCoordinate2D` extensions (`pulseDefaultCenter`, `isValid`, locale-aware distance) | — | — (value types) |
-| `IncidentStore.swift` | State manager + geo-region subscription | `IncidentStore`; `Incident.seedIncidents` is **`#if DEBUG` only** (previews) | `SafetyIncidentRemoteStore` (optional) | self: in-place O(1) mutation via `lookup[UUID:Int]`; `@Published lastSyncError` |
-| `SafetyIncidentRemoteStore.swift` | Firebase integration; geo-bounded feed plus generated contract DTO adoption | `SafetyIncidentRemoteStore`, `SafetyIncidentRemoteStoreError` | Firestore `safety_incidents_public` via per-prefix `geohash` range listeners | Functions `submit_incident`, `record_incident_signal`, `record_incident_concern`; Storage evidence |
+| `IncidentStore.swift` | State manager + geo-region subscription; routes all writes through the durable outbox and derives signal outcomes from the shared contract state machine (`ContractDTO.applySignal`) instead of a duplicated client rule | `IncidentStore`; `Incident.seedIncidents` is **`#if DEBUG` only** (previews) | `SafetyIncidentRemoteStore` (optional), `OutboxQueue` | self: in-place O(1) mutation via `lookup[UUID:Int]`; `@Published lastSyncError`; enqueues outbox operations |
+| `OutboxQueue.swift` | Durable client outbox (actor) for reports/signals/concerns/SOS; survives app kill via atomic JSON persistence under Application Support, exponential-backoff retry, and crash recovery (`processing`→`queued` on launch). In-memory variant under XCTest | `OutboxQueue`, `OutboxOperation`, `OutboxPayload` + per-kind payload structs | persisted outbox file | atomic JSON file; drained by the stores |
+| `SafetyIncidentRemoteStore.swift` | Firebase integration; live geohash listener **plus** the scalable `query_incidents_h3` callable client (hybrid). Both decode through the generated `ContractDTO.PublicIncident` mapping; submit requests are built from `ContractDTO.SubmitIncidentPayload` | `SafetyIncidentRemoteStore`, `SafetyIncidentRemoteStoreError` | Firestore `safety_incidents_public` via per-prefix `geohash` range listeners; `query_incidents_h3` callable | Functions `submit_incident`, `record_incident_signal`, `record_incident_concern`; Storage evidence |
 | `Geohash.swift` | Geohash encode + neighbour/covering-cell + radius→precision | `Geohash` (enum) | — | — (pure) |
 | `MapDefaults.swift` | Shared initial-camera logic | `MapDefaults` | `LocationManager.lastKnownCoordinate` | — |
 | `SharedComponents.swift` | Reusable UI: `cardPanel()`, `CategoryChip`, `LocationPromptCard` | view modifier + 2 views | `CLAuthorizationStatus` | opens Settings / requests permission |
@@ -166,7 +171,7 @@ to Building fire, not Market fire. No new subtypes were added. Covered by
 | `SOSRoutePlaybackView.swift` | Recent SOS trail and upload-state view | `SOSRoutePlaybackView` | `SOSStore.trail`, queued event counts | retry queued SOS events |
 | `SOSMapArtifacts.swift` | Map overlays for SOS trails and high-risk incidents | `IncidentDangerHalo`, `SOSTrailBreadcrumb`, `SOSLastKnownMarker` | `Incident`, `SOSMapTrailArtifact` | — |
 | `Localizable.xcstrings` | String Catalog (en source; es example) | — | resolved by `Text`/`LocalizedStringKey` | — |
-| `functions/src/geohash.js` | Server geohash encoder (matches `Geohash.swift`) | `encodeGeohash` | lat/lon | `geohash` field on public incidents |
+| `functions/src/geohash.ts` | Server geohash encoder (matches `Geohash.swift`) | `encodeGeohash` | lat/lon | `geohash` field on public incidents |
 | `storage.rules` | Storage access rules | — | Auth uid | reporter-owned image/audio only, ≤10 MB |
 | `SOSRemoteStore.swift` | SOS Firebase Functions + app-alert API | `SOSRemoteStore`, `SOSActivationPayload`, `SOSLocationUpdatePayload`, `SOSResolutionPayload`, app trusted-contact invite/relationship/alert DTOs | Firebase configured state, `sos_app_alerts_private` for recipient-scoped alerts | Functions `activate_sos`, `append_sos_location`, `resolve_sos`, `create_app_trusted_contact_invite`, `accept_app_trusted_contact_invite`, `list_app_trusted_contacts` |
 | `SOSTrustedContact.swift` | Local SOS contacts | `SOSTrustedContact`, `SOSTrustedContactStore`, notification target payloads | Keychain generic password item | Keychain generic password item; app route metadata when present |
@@ -174,16 +179,17 @@ to Building fire, not Market fire. No new subtypes were added. Covered by
 | `SOSPrivacyPolicy.swift` | SOS sharing limits | `SOSPrivacyPolicy`, `SOSPayloadCoding` | — | — |
 | `firebase.json` | Firebase backend config | Functions, Firestore, emulator config | — | deploy/emulator behavior |
 | `firestore.rules` | Firestore access rules | server-only SOS collections | Auth/custom claims | denies raw SOS client reads |
-| `functions/src/index.js` | Cloud Functions export surface | callables/webhooks re-exported from bounded modules | module exports | — |
+| `functions/src/index.js` | Cloud Functions export surface (thin JS barrel; all domain modules are **strict TypeScript** compiled to `lib/`) | callables/webhooks re-exported from bounded modules | module exports | — |
 | `functions/src/incidents/` | Incident callable and read-model module | `submit_incident`, `record_incident_signal`, `query_incidents_h3`, `rollupIncidentCounters`, `IncidentRepository` | callable payloads, H3 query cells, shared contract rules | `safety_incidents_public`, `safety_reports_private`, feed rate-limit collections, private counter shards/rollups |
 | `functions/src/moderation/` | Moderation callable module | `record_incident_concern`, `ModerationRepository` | callable concern reports | `safety_incident_concerns_private`, public concern counters |
 | `functions/src/sos/` | SOS callable module | `activate_sos`, `append_sos_location`, `resolve_sos`, app trusted-contact callables, `SOSRepository` | contract-shaped SOS payloads | private SOS session/location/app-alert/idempotency/rate-limit collections |
 | `functions/src/disclosure/` | Privileged disclosure callable module | legal request intake/review/access, `DisclosureRepository` | custom claims, legal request payloads | legal request, access-grant, and audit collections |
-| `functions/src/notifications/` | Notification domain module | trusted-contact fan-out and delivery summary helpers | SOS notification inputs | notification attempt records, Twilio provider APIs |
-| `functions/src/shared/` | Backend shared adapters | Firebase Admin, callable config, audit/util/H3/privacy helpers | runtime config, Firestore timestamps | shared audit records/helpers |
-| `functions/src/sosShared.js` | SOS backend validation helpers | payload sanitizers, idempotency helpers | callable payloads | pure values |
-| `functions/src/notificationProviders.js` | SOS notification adapters | Twilio SMS, voice, and Comms Email | provider secrets | Twilio delivery APIs |
-| `functions/src/twilioOptOut.js` | Twilio inbound opt-out helpers | STOP/START parser, phone hash, signature validator | Twilio webhook params | pure values |
+| `functions/src/claims/` | Audited SOS role-claim management | `mint_sos_role_claim`, `revoke_sos_role_claim` | `sosAdmin` custom claim, target uid | custom claims (with expiry), private grant ledger, chained audit |
+| `functions/src/notifications/` | Notification domain module + Cloud Tasks worker | `processSosNotifications` (task queue), trusted-contact fan-out/DLQ helpers | SOS notification inputs, task retry count | notification attempt/task/DLQ records, Twilio provider APIs |
+| `functions/src/shared/` | Backend shared kernel | admin init, callable/task config, util, audit chain, envelope encryption, H3/k-anon privacy helpers | runtime config, Firestore timestamps | shared audit records/helpers |
+| `functions/src/sosShared.ts` | SOS backend validation helpers | payload sanitizers, idempotency helpers | callable payloads | pure values |
+| `functions/src/notificationProviders.ts` | SOS notification adapters | Twilio SMS, voice, and Comms Email | provider secrets | Twilio delivery APIs |
+| `functions/src/twilioOptOut.ts` | Twilio inbound opt-out helpers | STOP/START parser, phone hash, signature validator | Twilio webhook params | pure values |
 | `functions/test/*.test.js` | Node backend tests | geohash, payload, H3/privacy, sharded counters, signal/concern, notification, SOS, Twilio opt-out suites | test fixtures/helpers | assertions only |
 | `packages/contract/` | Shared contract package | Zod schemas, generated TS validators/types, generated Swift Codable DTOs, shared incident signal rules | contract source schemas | generated `app/Generated/PulseTrackrContract.generated.swift` |
 | `docs/api/contract.md` | Generated API contract reference | incident/SOS/disclosure/notification schemas | `packages/contract` JSON Schema | regenerated by `npm run codegen` in `packages/contract` |
@@ -571,7 +577,7 @@ The Firebase backend now lives in this repo:
 - `firebase.json` configures Firestore rules/indexes, Storage rules, and local emulators for Auth, Functions, and Firestore.
 - `firestore.rules` denies direct client access to raw SOS location/session/notification/task/DLQ/idempotency/rate-limit collections, audit chain heads, disclosure key releases, role-claim ledgers, `safety_feed_rate_limits_private`, and private concern records. `safety_incidents_public` is client-readable but client-unwritable: new reports go through `submit_incident`, community signals go through `record_incident_signal`, and concern reports go through `record_incident_concern`.
 - `storage.rules` scopes incident evidence to `incident_reports/{uid}/…`: the owner may create image/audio ≤10 MB; everything else denied.
-- `functions/src/index.js` is now the export surface; callable implementations live in bounded modules with handler/domain/repository boundaries:
+- The backend is **strict TypeScript** (compiled to `lib/` via the `predeploy` build); `functions/src/index.js` is the thin JS export barrel, and callable implementations live in bounded modules with handler/domain/repository boundaries:
   - `submit_incident`: auth/App Check, payload sanitization, **per-user rate limit** (15 s cooldown, 20/hr via `safety_feed_rate_limits_private`), exact write to `safety_reports_private`, H3 metadata on the private report, and public coordinate/geohash reveal only after the k-anonymous H3 threshold is met.
   - `record_incident_signal`: auth/App Check, per-user rate limit (2 s cooldown, 120/hr), server-authoritative private counter-shard increment + status/severity derivation (`deriveSignalOutcome`); the only write path to the read-only public feed. No-op on resolved incidents.
   - `rollupIncidentCounters`: scheduled every 5 minutes; folds private counter shards into the public read model and writes a private rollup record for operations review.
@@ -591,8 +597,8 @@ The Firebase backend now lives in this repo:
 - `docs/api/contract.md` is generated from the contract JSON Schema by `packages/contract/codegen/generate-api-docs.cjs`; CI fails if the generated docs drift.
 - `docs/adr/` records the contract, privacy, resilience, and scaled read-model decisions; `docs/runbooks/` covers Firebase deploys, incident feed operations, SOS operations, and secret rotation.
 - `.github/workflows/phase1-contract.yml` gates the contract foundation with codegen drift checks, Functions build/tests, Firestore rules emulator tests, and an iOS simulator build.
-- `functions/src/sosShared.js` keeps the validation logic pure and covered by `node --test`.
-- `functions/src/notificationProviders.js` sends SMS, phone calls, and email through Twilio when credentials are configured. Missing credentials are recorded as `provider_unconfigured`, never as a successful alert.
+- `functions/src/sosShared.ts` keeps the validation logic pure and covered by `node --test`.
+- `functions/src/notificationProviders.ts` sends SMS, phone calls, and email through Twilio when credentials are configured. Missing credentials are recorded as `provider_unconfigured`, never as a successful alert.
 - The iOS client writes report, signal, concern, SOS activate/location/resolve actions to a durable JSON outbox under Application Support and drains it on launch/foreground. SOS also persists its local session/trail/queue snapshot so replay survives app termination.
 
 Production still needs provider secrets, `SOS_ENVELOPE_KEK`, sender verification, delivery-receipt monitoring, and a documented incident-response owner before any live SOS launch. The code path is now real, but operations must be real too.
@@ -635,7 +641,7 @@ cell center, and clients query only cells around the user.
   present in the cell (default `k=3`, resolution 8 with resolution 7 fallback).
   The public coordinate is the H3 cell center. The public doc also carries
   `public_h3_cell`, `public_h3_resolution`, and a `geohash` encoded through
-  `functions/src/geohash.js`, byte-for-byte compatible with the client encoder in
+  `functions/src/geohash.ts`, byte-for-byte compatible with the client encoder in
   `app/Geohash.swift`.
 - **Read side, current iOS listener** — `Geohash.coveringPrefixes(lat, lon, radiusMeters)`
   picks a precision sized to the watch radius and returns the centre cell + its 8
