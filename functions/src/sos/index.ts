@@ -1,11 +1,8 @@
-'use strict';
-
-const crypto = require('node:crypto');
-const { HttpsError, onCall } = require('firebase-functions/v2/https');
-const { logger } = require('firebase-functions');
-const { db, FieldValue, Timestamp } = require('../shared/admin');
-const { callableOptions } = require('../shared/config');
-const {
+import crypto from 'node:crypto';
+import { HttpsError, onCall } from 'firebase-functions/v2/https';
+import { db, FieldValue, Timestamp } from '../shared/admin';
+import { callableOptions } from '../shared/config';
+import {
   withoutUndefined,
   cleanString,
   numberOr,
@@ -14,10 +11,10 @@ const {
   requireAuth,
   translateErrors,
   retentionDate,
-} = require('../shared/util');
-const { appendAuditToTransaction, logAudit } = require('../shared/audit');
-const { decryptPrivateJson, encryptPrivateJson, privateLocationJson } = require('../shared/envelope');
-const {
+} from '../shared/util';
+import { appendAuditToTransaction, logAudit } from '../shared/audit';
+import { decryptPrivateJson, encryptPrivateJson, privateLocationJson } from '../shared/envelope';
+import {
   HARD_LIMITS,
   makeIdempotencyKey,
   makeLocationUpdateId,
@@ -25,29 +22,29 @@ const {
   sanitizeActivationPayload,
   sanitizeLocationUpdatePayload,
   sanitizeResolutionPayload,
-} = require('../sosShared');
-const { enqueueSosNotificationTask, providerNameForChannel } = require('../notifications');
+} from '../sosShared';
+import { enqueueSosNotificationTask } from '../notifications';
 
 const APP_TRUSTED_CONTACT_INVITE_TTL_SECONDS = 3 * 24 * 60 * 60;
 const APP_TRUSTED_CONTACT_ALERT_LIMIT = 10;
 
-let sosRepository;
+let sosRepository: SOSRepository;
 
-exports.activate_sos = onCall(callableOptions, async (request) => {
+export const activate_sos = onCall(callableOptions, async (request) => {
   const uid = requireAuth(request);
   const now = new Date();
   const payload = translateErrors(() => sanitizeActivationPayload(request.data || {}, now));
   return sosRepository.activate({ uid, now, payload });
 });
 
-exports.create_app_trusted_contact_invite = onCall(callableOptions, async (request) => {
+export const create_app_trusted_contact_invite = onCall(callableOptions, async (request) => {
   const uid = requireAuth(request);
   const now = new Date();
   const ownerDisplayName = cleanString(request.data?.owner_display_name, 80) || 'PulseTrackr user';
   return sosRepository.createAppTrustedContactInvite({ uid, now, ownerDisplayName });
 });
 
-exports.accept_app_trusted_contact_invite = onCall(callableOptions, async (request) => {
+export const accept_app_trusted_contact_invite = onCall(callableOptions, async (request) => {
   const trustedContactUid = requireAuth(request);
   const now = new Date();
   const inviteCode = normalizeAppTrustedContactInviteCode(request.data?.invite_code);
@@ -64,12 +61,12 @@ exports.accept_app_trusted_contact_invite = onCall(callableOptions, async (reque
   });
 });
 
-exports.list_app_trusted_contacts = onCall(callableOptions, async (request) => {
+export const list_app_trusted_contacts = onCall(callableOptions, async (request) => {
   const uid = requireAuth(request);
   return sosRepository.listAppTrustedContacts(uid);
 });
 
-exports.revoke_app_trusted_contact = onCall(callableOptions, async (request) => {
+export const revoke_app_trusted_contact = onCall(callableOptions, async (request) => {
   const uid = requireAuth(request);
   const relationshipId = cleanString(request.data?.relationship_id, 160);
   if (!relationshipId) {
@@ -79,20 +76,20 @@ exports.revoke_app_trusted_contact = onCall(callableOptions, async (request) => 
   return sosRepository.revokeAppTrustedContact({ uid, relationshipId });
 });
 
-exports.append_sos_location = onCall(callableOptions, async (request) => {
+export const append_sos_location = onCall(callableOptions, async (request) => {
   const uid = requireAuth(request);
   const payload = translateErrors(() => sanitizeLocationUpdatePayload(request.data || {}));
   return sosRepository.appendLocation({ uid, payload, now: new Date() });
 });
 
-exports.resolve_sos = onCall(callableOptions, async (request) => {
+export const resolve_sos = onCall(callableOptions, async (request) => {
   const uid = requireAuth(request);
   const payload = translateErrors(() => sanitizeResolutionPayload(request.data || {}));
   return sosRepository.resolve({ uid, payload, now: new Date() });
 });
 
 class SOSRepository {
-  async activate({ uid, now, payload }) {
+  async activate({ uid, now, payload }: any) {
   const idempotencyKey = makeIdempotencyKey(uid, payload.clientSessionId);
   const idempotencyRef = db.collection('sos_idempotency_private').doc(idempotencyKey);
   const rateRef = db.collection('sos_rate_limits_private').doc(uid);
@@ -100,12 +97,12 @@ class SOSRepository {
   const expiresAt = new Date(now.getTime() + payload.privacy.adminAccessExpiresAfterSeconds * 1000);
   const deleteAfter = retentionDate(now);
 
-  const transactionResult = await db.runTransaction(async (transaction) => {
+  const transactionResult = await db.runTransaction(async (transaction): Promise<any> => {
     const existing = await transaction.get(idempotencyRef);
     if (existing.exists) {
-      const data = existing.data();
+      const data = existing.data() as any;
       const sessionSnap = await transaction.get(db.collection('sos_sessions_private').doc(data.sessionId));
-      const session = sessionSnap.exists ? sessionSnap.data() : {};
+      const session: any = sessionSnap.exists ? sessionSnap.data() : {};
       const sagaStatus = session.notificationSagaStatus;
       return {
         alreadyExisted: true,
@@ -125,7 +122,7 @@ class SOSRepository {
 
     await applyActivationRateLimit(transaction, rateRef, now);
 
-    const trustedContactsAccepted = payload.trustedContacts.map((contact) => contact.contactId);
+    const trustedContactsAccepted = payload.trustedContacts.map((contact: any) => contact.contactId);
     await appendAuditToTransaction(transaction, {
       eventType: 'sos_activated',
       actorUid: uid,
@@ -204,9 +201,9 @@ class SOSRepository {
   });
 
   let notificationSummary = transactionResult.notificationSummary || { queued: 0, sent: 0, failed: 0, skipped: 0, optedOut: 0 };
-  let trustedContactsNotified = transactionResult.trustedContactsNotified || [];
-  let trustedContactsOptedOut = transactionResult.trustedContactsOptedOut || [];
-  let appTrustedContactsNotified = transactionResult.appTrustedContactsNotified || [];
+  const trustedContactsNotified = transactionResult.trustedContactsNotified || [];
+  const trustedContactsOptedOut = transactionResult.trustedContactsOptedOut || [];
+  const appTrustedContactsNotified = transactionResult.appTrustedContactsNotified || [];
   if (!transactionResult.alreadyExisted || transactionResult.shouldEnqueueNotification) {
     const delivery = await enqueueSosNotificationTask({
       sessionId: transactionResult.sessionId,
@@ -234,7 +231,7 @@ class SOSRepository {
   };
   }
 
-  async createAppTrustedContactInvite({ uid, now, ownerDisplayName }) {
+  async createAppTrustedContactInvite({ uid, now, ownerDisplayName }: any) {
   const inviteCode = makeAppTrustedContactInviteCode();
   const inviteRef = db.collection('sos_app_trusted_contact_invites_private').doc(appTrustedContactInviteDocId(inviteCode));
   const expiresAt = new Date(now.getTime() + APP_TRUSTED_CONTACT_INVITE_TTL_SECONDS * 1000);
@@ -269,15 +266,15 @@ class SOSRepository {
   };
   }
 
-  async acceptAppTrustedContactInvite({ trustedContactUid, now, inviteCode, trustedContactDisplayName }) {
+  async acceptAppTrustedContactInvite({ trustedContactUid, now, inviteCode, trustedContactDisplayName }: any) {
   const inviteRef = db.collection('sos_app_trusted_contact_invites_private').doc(appTrustedContactInviteDocId(inviteCode));
-  const result = await db.runTransaction(async (transaction) => {
+  const result = await db.runTransaction(async (transaction): Promise<any> => {
     const inviteSnap = await transaction.get(inviteRef);
     if (!inviteSnap.exists) {
       throw new HttpsError('not-found', 'Trusted contact invite not found');
     }
 
-    const invite = inviteSnap.data();
+    const invite = inviteSnap.data() as any;
     const expiresAt = timestampToDate(invite.expiresAt);
     if (invite.status !== 'pending') {
       throw new HttpsError('failed-precondition', 'Trusted contact invite was already used');
@@ -344,7 +341,7 @@ class SOSRepository {
   };
   }
 
-  async listAppTrustedContacts(uid) {
+  async listAppTrustedContacts(uid: string) {
   const [outgoingSnap, incomingSnap] = await Promise.all([
     db.collection('sos_app_trusted_contacts_private').where('ownerUid', '==', uid).get(),
     db.collection('sos_app_trusted_contacts_private').where('trustedContactUid', '==', uid).get(),
@@ -360,7 +357,7 @@ class SOSRepository {
   return { outgoing, incoming };
   }
 
-  async revokeAppTrustedContact({ uid, relationshipId }) {
+  async revokeAppTrustedContact({ uid, relationshipId }: any) {
   const relationshipRef = db.collection('sos_app_trusted_contacts_private').doc(relationshipId);
   await db.runTransaction(async (transaction) => {
     const relationshipSnap = await transaction.get(relationshipRef);
@@ -368,7 +365,7 @@ class SOSRepository {
       throw new HttpsError('not-found', 'Trusted app contact not found');
     }
 
-    const relationship = relationshipSnap.data();
+    const relationship = relationshipSnap.data() as any;
     if (relationship.ownerUid !== uid && relationship.trustedContactUid !== uid) {
       throw new HttpsError('permission-denied', 'Only either person in this trusted contact relationship can revoke it');
     }
@@ -395,12 +392,12 @@ class SOSRepository {
   return { revoked: true };
   }
 
-  async appendLocation({ uid, payload, now }) {
+  async appendLocation({ uid, payload, now }: any) {
   const sessionRef = db.collection('sos_sessions_private').doc(payload.sessionId);
   const updateRef = db.collection('sos_location_updates_private')
     .doc(makeLocationUpdateId(payload.sessionId, payload.sequenceNumber));
 
-  const result = await db.runTransaction(async (transaction) => {
+  const result = await db.runTransaction(async (transaction): Promise<any> => {
     const sessionSnap = await transaction.get(sessionRef);
     assertOwnedActiveSession(sessionSnap, uid, now);
 
@@ -409,7 +406,7 @@ class SOSRepository {
       return { accepted: true, duplicate: true };
     }
 
-    const session = sessionSnap.data();
+    const session = sessionSnap.data() as any;
     await appendAuditToTransaction(transaction, {
       eventType: 'sos_location_appended',
       actorUid: uid,
@@ -466,15 +463,15 @@ class SOSRepository {
   return { accepted: result.accepted, duplicate: result.duplicate };
   }
 
-  async resolve({ uid, payload, now }) {
+  async resolve({ uid, payload, now }: any) {
   const sessionRef = db.collection('sos_sessions_private').doc(payload.sessionId);
 
-  const result = await db.runTransaction(async (transaction) => {
+  const result = await db.runTransaction(async (transaction): Promise<any> => {
     const sessionSnap = await transaction.get(sessionRef);
     if (!sessionSnap.exists) {
       throw new HttpsError('not-found', 'SOS session not found');
     }
-    const session = sessionSnap.data();
+    const session = sessionSnap.data() as any;
     if (session.ownerUid !== uid) {
       throw new HttpsError('permission-denied', 'Only the activating user can resolve this SOS session');
     }
@@ -524,65 +521,7 @@ class SOSRepository {
 
 sosRepository = new SOSRepository();
 
-async function enqueueAppTrustedContactAlerts({ sessionId, ownerUid, location, directionOfTravel, deleteAfter }) {
-  const relationships = await acceptedOutgoingAppTrustedContacts(ownerUid);
-  if (!relationships.length) {
-    return {
-      appTrustedContactsNotified: [],
-      notificationSummary: { queued: 0, sent: 0, failed: 0, skipped: 0, optedOut: 0 },
-    };
-  }
-
-  const batch = db.batch();
-  const appTrustedContactsNotified = [];
-  for (const relationship of relationships.slice(0, APP_TRUSTED_CONTACT_ALERT_LIMIT)) {
-    const alertRef = appAlertRef(sessionId, relationship.id);
-    const attemptRef = db.collection('sos_notification_attempts_private').doc();
-    const alert = appAlertPayload({
-      sessionId,
-      relationship,
-      location,
-      directionOfTravel,
-      status: 'active',
-      deleteAfter,
-    });
-    batch.set(alertRef, alert, { merge: true });
-    batch.set(attemptRef, withoutUndefined({
-      sessionId,
-      ownerUid,
-      contactId: relationship.id,
-      channel: 'app_push',
-      destination: relationship.trustedContactUid,
-      status: 'sent',
-      provider: providerNameForChannel('app_push'),
-      providerMessageId: alertRef.id,
-      createdAt: FieldValue.serverTimestamp(),
-      updatedAt: FieldValue.serverTimestamp(),
-      sentAt: FieldValue.serverTimestamp(),
-      deleteAfter: Timestamp.fromDate(deleteAfter),
-    }));
-    appTrustedContactsNotified.push(relationship.id);
-  }
-  await batch.commit();
-
-  logger.info('Created SOS app trusted-contact alerts', {
-    sessionId,
-    appTrustedContactCount: appTrustedContactsNotified.length,
-  });
-
-  return {
-    appTrustedContactsNotified,
-    notificationSummary: {
-      queued: appTrustedContactsNotified.length,
-      sent: appTrustedContactsNotified.length,
-      failed: 0,
-      skipped: 0,
-      optedOut: 0,
-    },
-  };
-}
-
-async function updateAppTrustedContactAlerts({ sessionId, ownerUid, location, directionOfTravel, deleteAfter }) {
+async function updateAppTrustedContactAlerts({ sessionId, ownerUid, location, directionOfTravel, deleteAfter }: any) {
   const relationships = await acceptedOutgoingAppTrustedContacts(ownerUid);
   if (!relationships.length) return;
 
@@ -603,7 +542,7 @@ async function updateAppTrustedContactAlerts({ sessionId, ownerUid, location, di
   await batch.commit();
 }
 
-async function resolveAppTrustedContactAlerts({ sessionId, ownerUid, finalLocation, deleteAfter }) {
+async function resolveAppTrustedContactAlerts({ sessionId, ownerUid, finalLocation, deleteAfter }: any) {
   const relationships = await acceptedOutgoingAppTrustedContacts(ownerUid);
   if (!relationships.length) return;
 
@@ -624,52 +563,25 @@ async function resolveAppTrustedContactAlerts({ sessionId, ownerUid, finalLocati
   await batch.commit();
 }
 
-async function acceptedOutgoingAppTrustedContacts(ownerUid) {
+async function acceptedOutgoingAppTrustedContacts(ownerUid: string) {
   const snapshot = await db.collection('sos_app_trusted_contacts_private').where('ownerUid', '==', ownerUid).get();
   return snapshot.docs
-    .map((doc) => ({ id: doc.id, ...doc.data() }))
-    .filter((relationship) => relationship.status === 'accepted' && relationship.trustedContactUid)
+    .map((doc) => ({ id: doc.id, ...doc.data() }) as any)
+    .filter((relationship: any) => relationship.status === 'accepted' && relationship.trustedContactUid)
     .slice(0, APP_TRUSTED_CONTACT_ALERT_LIMIT);
 }
 
-function appAlertRef(sessionId, relationshipId) {
+function appAlertRef(sessionId: string, relationshipId: string) {
   return db.collection('sos_app_alerts_private').doc(`${sessionId}_${relationshipId}`);
 }
 
-function appAlertPayload({ sessionId, relationship, location, directionOfTravel, status, deleteAfter }) {
-  return withoutUndefined({
-    sessionId,
-    ownerUid: relationship.ownerUid,
-    recipientUid: relationship.trustedContactUid,
-    relationshipId: relationship.id,
-    ownerDisplayName: relationship.ownerDisplayName,
-    trustedContactDisplayName: relationship.trustedContactDisplayName,
-    status,
-    lastKnownLocation: firestoreLocationCompat(location),
-    directionOfTravel,
-    createdAt: FieldValue.serverTimestamp(),
-    updatedAt: FieldValue.serverTimestamp(),
-    deleteAfter: Timestamp.fromDate(deleteAfter),
-  });
-}
-
-function combineNotificationSummaries(first, second) {
-  return {
-    queued: numberOr(first?.queued, 0) + numberOr(second?.queued, 0),
-    sent: numberOr(first?.sent, 0) + numberOr(second?.sent, 0),
-    failed: numberOr(first?.failed, 0) + numberOr(second?.failed, 0),
-    skipped: numberOr(first?.skipped, 0) + numberOr(second?.skipped, 0),
-    optedOut: numberOr(first?.optedOut ?? first?.opted_out, 0) + numberOr(second?.optedOut ?? second?.opted_out, 0),
-  };
-}
-
-async function applyActivationRateLimit(transaction, rateRef, now) {
+async function applyActivationRateLimit(transaction: any, rateRef: any, now: Date) {
   const snap = await transaction.get(rateRef);
   const windowStartsAt = new Date(now.getTime() - HARD_LIMITS.activationWindowSeconds * 1000);
-  const recentActivations = snap.exists
-    ? (snap.data().recentActivations || [])
-      .map(timestampToDate)
-      .filter((date) => date && date.getTime() >= windowStartsAt.getTime())
+  const recentActivations: any[] = snap.exists
+    ? ((snap.data() as any).recentActivations || [])
+      .map((value: any) => timestampToDate(value))
+      .filter((date: any) => date && date.getTime() >= windowStartsAt.getTime())
     : [];
   const latest = recentActivations.at(-1);
 
@@ -682,17 +594,17 @@ async function applyActivationRateLimit(transaction, rateRef, now) {
 
   recentActivations.push(now);
   transaction.set(rateRef, {
-    recentActivations: recentActivations.map((date) => Timestamp.fromDate(date)),
+    recentActivations: recentActivations.map((date: Date) => Timestamp.fromDate(date)),
     updatedAt: FieldValue.serverTimestamp(),
     deleteAfter: Timestamp.fromDate(retentionDate(now)),
   }, { merge: true });
 }
 
-function assertOwnedActiveSession(sessionSnap, uid, now) {
+function assertOwnedActiveSession(sessionSnap: any, uid: string, now: Date) {
   if (!sessionSnap.exists) {
     throw new HttpsError('not-found', 'SOS session not found');
   }
-  const session = sessionSnap.data();
+  const session = sessionSnap.data() as any;
   if (session.ownerUid !== uid) {
     throw new HttpsError('permission-denied', 'This SOS session belongs to another user');
   }
@@ -705,7 +617,7 @@ function assertOwnedActiveSession(sessionSnap, uid, now) {
   }
 }
 
-function makeAppTrustedContactInviteCode() {
+function makeAppTrustedContactInviteCode(): string {
   let code = '';
   while (code.length < 12) {
     code += crypto.randomBytes(9).toString('base64url').replace(/[^a-zA-Z0-9]/g, '');
@@ -713,23 +625,23 @@ function makeAppTrustedContactInviteCode() {
   return code.slice(0, 12).toUpperCase();
 }
 
-function normalizeAppTrustedContactInviteCode(value) {
+function normalizeAppTrustedContactInviteCode(value: unknown): string {
   return cleanString(value, 40).replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
 }
 
-function appTrustedContactInviteDocId(inviteCode) {
+function appTrustedContactInviteDocId(inviteCode: string): string {
   return crypto.createHash('sha256').update(`app_trusted_contact_invite:${inviteCode}`).digest('hex');
 }
 
-function appTrustedContactRelationshipId(ownerUid, trustedContactUid) {
+function appTrustedContactRelationshipId(ownerUid: string, trustedContactUid: string): string {
   return crypto
     .createHash('sha256')
     .update(`app_trusted_contact:${ownerUid}:${trustedContactUid}`)
     .digest('hex');
 }
 
-function appTrustedContactResponse(doc) {
-  const data = doc.data();
+function appTrustedContactResponse(doc: any) {
+  const data = doc.data() as any;
   return {
     relationship_id: doc.id,
     owner_uid: data.ownerUid,
@@ -741,7 +653,7 @@ function appTrustedContactResponse(doc) {
   };
 }
 
-function plaintextSessionLocation(session, sessionId) {
+function plaintextSessionLocation(session: any, sessionId: string) {
   if (session.lastKnownLocationEncrypted) {
     return decryptPrivateJson(
       session.lastKnownLocationEncrypted,
@@ -751,7 +663,7 @@ function plaintextSessionLocation(session, sessionId) {
   return session.lastKnownLocation || null;
 }
 
-function encryptedLocationAad(sessionId, ownerUid, field, extra = {}) {
+function encryptedLocationAad(sessionId: string, ownerUid: string, field: string, extra: Record<string, unknown> = {}) {
   return {
     domain: 'pulsetrackr.sos.location',
     sessionId,
@@ -761,7 +673,7 @@ function encryptedLocationAad(sessionId, ownerUid, field, extra = {}) {
   };
 }
 
-function firestoreLocationCompat(location) {
+function firestoreLocationCompat(location: any) {
   if (!location) return null;
   return withoutUndefined({
     latitude: location.latitude,
@@ -774,6 +686,6 @@ function firestoreLocationCompat(location) {
   });
 }
 
-function locationDate(value) {
+function locationDate(value: any): Date | null {
   return timestampToDate(value) || (value instanceof Date ? value : null);
 }

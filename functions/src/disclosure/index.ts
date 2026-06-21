@@ -1,18 +1,16 @@
-'use strict';
+import { HttpsError, onCall } from 'firebase-functions/v2/https';
+import { db, FieldValue, Timestamp } from '../shared/admin';
+import { callableOptions } from '../shared/config';
+import { requireAuth, translateErrors, withoutUndefined, retentionDate, timestampToDate, timestampToIso, plainLocation } from '../shared/util';
+import { logAudit } from '../shared/audit';
+import { decryptPrivateJson } from '../shared/envelope';
+import { privilegedRoleFromClaims, sanitizeLawEnforcementRequestPayload, sanitizeLawEnforcementReviewPayload } from '../sosShared';
 
-const { HttpsError, onCall } = require('firebase-functions/v2/https');
-const { db, FieldValue, Timestamp } = require('../shared/admin');
-const { callableOptions } = require('../shared/config');
-const { requireAuth, translateErrors, withoutUndefined, retentionDate, timestampToDate, timestampToIso, plainLocation } = require('../shared/util');
-const { logAudit } = require('../shared/audit');
-const { decryptPrivateJson } = require('../shared/envelope');
-const { privilegedRoleFromClaims, sanitizeLawEnforcementRequestPayload, sanitizeLawEnforcementReviewPayload } = require('../sosShared');
+let disclosureRepository: DisclosureRepository;
 
-let disclosureRepository;
-
-exports.record_law_enforcement_request = onCall(callableOptions, async (request) => {
+export const record_law_enforcement_request = onCall(callableOptions, async (request) => {
   const uid = requireAuth(request);
-  const role = privilegedRoleFromClaims(request.auth.token || {});
+  const role = privilegedRoleFromClaims(request.auth?.token || {});
   requireLegalOpsRole(role);
 
   const now = new Date();
@@ -20,9 +18,9 @@ exports.record_law_enforcement_request = onCall(callableOptions, async (request)
   return disclosureRepository.recordLawEnforcementRequest({ uid, role, now, payload });
 });
 
-exports.review_law_enforcement_request = onCall(callableOptions, async (request) => {
+export const review_law_enforcement_request = onCall(callableOptions, async (request) => {
   const uid = requireAuth(request);
-  const role = privilegedRoleFromClaims(request.auth.token || {});
+  const role = privilegedRoleFromClaims(request.auth?.token || {});
   requireLegalApprovalRole(role);
 
   const now = new Date();
@@ -30,9 +28,9 @@ exports.review_law_enforcement_request = onCall(callableOptions, async (request)
   return disclosureRepository.reviewLawEnforcementRequest({ uid, role, now, payload });
 });
 
-exports.request_sos_session_access = onCall(callableOptions, async (request) => {
+export const request_sos_session_access = onCall(callableOptions, async (request) => {
   const uid = requireAuth(request);
-  const role = privilegedRoleFromClaims(request.auth.token || {});
+  const role = privilegedRoleFromClaims(request.auth?.token || {});
   const sessionId = typeof request.data?.session_id === 'string' ? request.data.session_id : '';
   const reason = typeof request.data?.reason === 'string' ? request.data.reason.slice(0, 240) : '';
   const legalRequestId = typeof request.data?.legal_request_id === 'string' ? request.data.legal_request_id.trim() : '';
@@ -49,7 +47,7 @@ exports.request_sos_session_access = onCall(callableOptions, async (request) => 
 });
 
 class DisclosureRepository {
-  async recordLawEnforcementRequest({ uid, role, now, payload }) {
+  async recordLawEnforcementRequest({ uid, role, now, payload }: any) {
   const sessionSnap = await db.collection('sos_sessions_private').doc(payload.sessionId).get();
   const session = sessionSnap.exists ? sessionSnap.data() : null;
   const sessionExpiresAt = timestampToDate(session?.expiresAt);
@@ -112,14 +110,14 @@ class DisclosureRepository {
   };
   }
 
-  async reviewLawEnforcementRequest({ uid, role, now, payload }) {
+  async reviewLawEnforcementRequest({ uid, role, now, payload }: any) {
   const legalRequestRef = db.collection('sos_law_enforcement_requests_private').doc(payload.legalRequestId);
   const legalRequestSnap = await legalRequestRef.get();
   if (!legalRequestSnap.exists) {
     throw new HttpsError('not-found', 'Law enforcement request not found');
   }
 
-  const legalRequest = legalRequestSnap.data();
+  const legalRequest = legalRequestSnap.data() as any;
   const sessionSnap = await db.collection('sos_sessions_private').doc(legalRequest.sessionId).get();
   const session = sessionSnap.exists ? sessionSnap.data() : null;
   const sessionExpiresAt = timestampToDate(session?.expiresAt);
@@ -175,7 +173,7 @@ class DisclosureRepository {
   const maxApprovalExpiresAt = new Date(now.getTime() + 60 * 60 * 1000);
   const requestedExpiresAt = payload.expiresAt || new Date(now.getTime() + 30 * 60 * 1000);
   const approvalExpiresAt = new Date(Math.min(
-    sessionExpiresAt.getTime(),
+    sessionExpiresAt!.getTime(),
     requestedExpiresAt.getTime(),
     maxApprovalExpiresAt.getTime(),
   ));
@@ -217,7 +215,7 @@ class DisclosureRepository {
   };
   }
 
-  async requestSosSessionAccess({ uid, role, sessionId, reason, legalRequestId, now }) {
+  async requestSosSessionAccess({ uid, role, sessionId, reason, legalRequestId, now }: any) {
   if (!role) {
     await logAudit({
       eventType: 'privileged_access_requested',
@@ -250,7 +248,7 @@ class DisclosureRepository {
     throw new HttpsError('not-found', 'SOS session not found');
   }
 
-  const session = sessionSnap.data();
+  const session = sessionSnap.data() as any;
   const expiresAt = timestampToDate(session.expiresAt);
   const active = session.status === 'active' && expiresAt && expiresAt.getTime() > now.getTime();
   if (!active) {
@@ -267,7 +265,7 @@ class DisclosureRepository {
     throw new HttpsError('failed-precondition', 'Exact SOS access is limited to active, unexpired sessions');
   }
 
-  let legalRequest = null;
+  let legalRequest: any = null;
   if (role === 'lawEnforcement') {
     if (!legalRequestId) {
       await logAudit({
@@ -300,7 +298,7 @@ class DisclosureRepository {
   }
 
   const grantExpiresAt = new Date(Math.min(
-    expiresAt.getTime(),
+    expiresAt!.getTime(),
     now.getTime() + 15 * 60 * 1000,
   ));
   const responseScope = legalRequest?.approvedScope || [
@@ -387,19 +385,19 @@ class DisclosureRepository {
 
 disclosureRepository = new DisclosureRepository();
 
-function requireLegalOpsRole(role) {
+function requireLegalOpsRole(role: string | null) {
   if (role !== 'sosAdmin' && role !== 'careTeam') {
     throw new HttpsError('permission-denied', 'Recording law enforcement requests requires a PulseTrackr legal/admin role');
   }
 }
 
-function requireLegalApprovalRole(role) {
+function requireLegalApprovalRole(role: string | null) {
   if (role !== 'sosAdmin') {
     throw new HttpsError('permission-denied', 'Approving law enforcement requests requires a PulseTrackr admin role');
   }
 }
 
-function decryptSessionLocation(session, sessionId, field) {
+function decryptSessionLocation(session: any, sessionId: string, field: string) {
   const encryptedField = `${field}Encrypted`;
   if (session[encryptedField]) {
     return decryptPrivateJson(
@@ -410,7 +408,7 @@ function decryptSessionLocation(session, sessionId, field) {
   return session[field] || null;
 }
 
-function decryptSessionTrail(session, sessionId) {
+function decryptSessionTrail(session: any, sessionId: string) {
   if (session.recentTrailEncrypted) {
     return decryptPrivateJson(
       session.recentTrailEncrypted,
@@ -420,7 +418,7 @@ function decryptSessionTrail(session, sessionId) {
   return session.recentTrail || [];
 }
 
-function encryptedLocationAad(sessionId, ownerUid, field, extra = {}) {
+function encryptedLocationAad(sessionId: string, ownerUid: string, field: string, extra: Record<string, unknown> = {}) {
   return {
     domain: 'pulsetrackr.sos.location',
     sessionId,
@@ -430,7 +428,7 @@ function encryptedLocationAad(sessionId, ownerUid, field, extra = {}) {
   };
 }
 
-async function approvedLawEnforcementRequest({ legalRequestId, sessionId, now }) {
+async function approvedLawEnforcementRequest({ legalRequestId, sessionId, now }: any) {
   const snapshot = await db.collection('sos_law_enforcement_requests_private').doc(legalRequestId).get();
   if (!snapshot.exists) {
     return {
@@ -440,7 +438,7 @@ async function approvedLawEnforcementRequest({ legalRequestId, sessionId, now })
     };
   }
 
-  const request = snapshot.data();
+  const request = snapshot.data() as any;
   const approvalExpiresAt = timestampToDate(request.approvalExpiresAt);
   if (request.sessionId !== sessionId) {
     return {

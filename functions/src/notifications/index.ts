@@ -1,11 +1,9 @@
-'use strict';
-
-const { onRequest } = require('firebase-functions/v2/https');
-const { onTaskDispatched } = require('firebase-functions/v2/tasks');
-const { logger } = require('firebase-functions');
-const { getFunctions } = require('firebase-admin/functions');
-const { db, FieldValue, Timestamp } = require('../shared/admin');
-const {
+import { onRequest } from 'firebase-functions/v2/https';
+import { onTaskDispatched } from 'firebase-functions/v2/tasks';
+import { logger } from 'firebase-functions';
+import { getFunctions } from 'firebase-admin/functions';
+import { db, FieldValue, Timestamp } from '../shared/admin';
+import {
   webhookOptions,
   taskQueueOptions,
   secretValue,
@@ -15,28 +13,28 @@ const {
   twilioFromNumber,
   twilioEmailFromAddress,
   twilioAuthToken,
-} = require('../shared/config');
-const { withoutUndefined, cleanString, retentionDate, firestoreLocation, numberOr } = require('../shared/util');
-const { decryptPrivateJson } = require('../shared/envelope');
-const { providerReadiness, sendNotificationAttempt } = require('../notificationProviders');
-const {
+} from '../shared/config';
+import { withoutUndefined, cleanString, retentionDate, firestoreLocation, numberOr } from '../shared/util';
+import { decryptPrivateJson } from '../shared/envelope';
+import { providerReadiness, sendNotificationAttempt } from '../notificationProviders';
+import {
   normalizePhoneNumberForSMS,
   parseInboundOptCommand,
   smsOptOutDocId,
   validateTwilioSignature,
-} = require('../twilioOptOut');
+} from '../twilioOptOut';
 
 const TASK_QUEUE_FUNCTION_NAME = 'processSosNotifications';
 const TASK_MAX_ATTEMPTS = 5;
 const APP_TRUSTED_CONTACT_ALERT_LIMIT = 10;
 
-exports.processSosNotifications = onTaskDispatched(taskQueueOptions, async (request) => {
+export const processSosNotifications = onTaskDispatched(taskQueueOptions, async (request) => {
   await processSosNotificationTask(request.data || {}, {
     retryCount: numberOr(request.retryCount, 0),
   });
 });
 
-exports.twilio_sms_webhook = onRequest(webhookOptions, async (request, response) => {
+export const twilio_sms_webhook = onRequest(webhookOptions, async (request, response) => {
   if (request.method !== 'POST') {
     response.set('Allow', 'POST').status(405).send('Method Not Allowed');
     return;
@@ -91,7 +89,7 @@ exports.twilio_sms_webhook = onRequest(webhookOptions, async (request, response)
   response.status(204).send('');
 });
 
-async function enqueueSosNotificationTask({ sessionId, ownerUid, contacts, location, directionOfTravel, deleteAfter }) {
+export async function enqueueSosNotificationTask({ sessionId, ownerUid, contacts, location, directionOfTravel, deleteAfter }: any) {
   const taskPayload = {
     sessionId,
     ownerUid,
@@ -125,7 +123,7 @@ async function enqueueSosNotificationTask({ sessionId, ownerUid, contacts, locat
       enqueued: true,
       notificationSummary: { queued: contacts.length, sent: 0, failed: 0, skipped: 0, optedOut: 0 },
     };
-  } catch (error) {
+  } catch (error: any) {
     await recordNotificationDLQ({
       sessionId,
       ownerUid,
@@ -139,7 +137,7 @@ async function enqueueSosNotificationTask({ sessionId, ownerUid, contacts, locat
   }
 }
 
-async function processSosNotificationTask(payload, context = {}) {
+export async function processSosNotificationTask(payload: any, context: any = {}) {
   const sessionId = cleanString(payload.sessionId, 160);
   const ownerUid = cleanString(payload.ownerUid, 160);
   if (!sessionId || !ownerUid) {
@@ -163,7 +161,7 @@ async function processSosNotificationTask(payload, context = {}) {
     if (!sessionSnap.exists) {
       throw new Error('sos session not found for notification task');
     }
-    const session = sessionSnap.data();
+    const session = sessionSnap.data() as any;
     if (session.notificationSagaStatus === 'completed') {
       return;
     }
@@ -202,7 +200,7 @@ async function processSosNotificationTask(payload, context = {}) {
       completedAt: FieldValue.serverTimestamp(),
       updatedAt: FieldValue.serverTimestamp(),
     }, { merge: true });
-  } catch (error) {
+  } catch (error: any) {
     const terminal = numberOr(context.retryCount, 0) >= TASK_MAX_ATTEMPTS - 1;
     await taskRef.set(withoutUndefined({
       status: terminal ? 'dead_lettered' : 'retrying',
@@ -225,7 +223,7 @@ async function processSosNotificationTask(payload, context = {}) {
   }
 }
 
-async function enqueueTrustedContactNotifications({ sessionId, ownerUid, contacts, location, deleteAfter }) {
+export async function enqueueTrustedContactNotifications({ sessionId, ownerUid, contacts, location, deleteAfter }: any) {
   if (!contacts.length) {
     return {
       trustedContactsNotified: [],
@@ -235,8 +233,8 @@ async function enqueueTrustedContactNotifications({ sessionId, ownerUid, contact
   }
 
   const batch = db.batch();
-  const attempts = [];
-  const immediateResults = [];
+  const attempts: any[] = [];
+  const immediateResults: any[] = [];
   for (const contact of contacts) {
     for (const channel of contact.channels) {
       if (channel === 'app_push') {
@@ -294,8 +292,8 @@ async function enqueueTrustedContactNotifications({ sessionId, ownerUid, contact
   return deliverQueuedNotifications({ sessionId, attempts, location, initialResults: immediateResults });
 }
 
-async function deliverQueuedNotifications({ sessionId, attempts, location, initialResults = [] }) {
-  const deliveryResults = await Promise.all(attempts.map(async (attempt) => {
+async function deliverQueuedNotifications({ sessionId, attempts, location, initialResults = [] }: any) {
+  const deliveryResults = await Promise.all(attempts.map(async (attempt: any) => {
     const sentAt = new Date();
     const result = await sendNotificationAttempt({
       sessionId,
@@ -362,7 +360,7 @@ async function deliverQueuedNotifications({ sessionId, attempts, location, initi
   return { trustedContactsNotified, trustedContactsOptedOut, notificationSummary };
 }
 
-async function enqueueAppTrustedContactAlerts({ sessionId, ownerUid, location, directionOfTravel, deleteAfter }) {
+async function enqueueAppTrustedContactAlerts({ sessionId, ownerUid, location, directionOfTravel, deleteAfter }: any) {
   const relationships = await acceptedOutgoingAppTrustedContacts(ownerUid);
   if (!relationships.length) {
     return {
@@ -372,7 +370,7 @@ async function enqueueAppTrustedContactAlerts({ sessionId, ownerUid, location, d
   }
 
   const batch = db.batch();
-  const appTrustedContactsNotified = [];
+  const appTrustedContactsNotified: string[] = [];
   for (const relationship of relationships.slice(0, APP_TRUSTED_CONTACT_ALERT_LIMIT)) {
     const alertRef = appAlertRef(sessionId, relationship.id);
     const attemptRef = db.collection('sos_notification_attempts_private').doc();
@@ -420,19 +418,19 @@ async function enqueueAppTrustedContactAlerts({ sessionId, ownerUid, location, d
   };
 }
 
-async function acceptedOutgoingAppTrustedContacts(ownerUid) {
+async function acceptedOutgoingAppTrustedContacts(ownerUid: string) {
   const snapshot = await db.collection('sos_app_trusted_contacts_private').where('ownerUid', '==', ownerUid).get();
   return snapshot.docs
-    .map((doc) => ({ id: doc.id, ...doc.data() }))
-    .filter((relationship) => relationship.status === 'accepted' && relationship.trustedContactUid)
+    .map((doc) => ({ id: doc.id, ...doc.data() }) as any)
+    .filter((relationship: any) => relationship.status === 'accepted' && relationship.trustedContactUid)
     .slice(0, APP_TRUSTED_CONTACT_ALERT_LIMIT);
 }
 
-function appAlertRef(sessionId, relationshipId) {
+function appAlertRef(sessionId: string, relationshipId: string) {
   return db.collection('sos_app_alerts_private').doc(`${sessionId}_${relationshipId}`);
 }
 
-function appAlertPayload({ sessionId, relationship, location, directionOfTravel, status, deleteAfter }) {
+function appAlertPayload({ sessionId, relationship, location, directionOfTravel, status, deleteAfter }: any) {
   return withoutUndefined({
     sessionId,
     ownerUid: relationship.ownerUid,
@@ -449,7 +447,7 @@ function appAlertPayload({ sessionId, relationship, location, directionOfTravel,
   });
 }
 
-function sessionPlainLocation(session, sessionId, ownerUid) {
+function sessionPlainLocation(session: any, sessionId: string, ownerUid: string) {
   if (session.lastKnownLocationEncrypted) {
     return decryptPrivateJson(
       session.lastKnownLocationEncrypted,
@@ -459,7 +457,7 @@ function sessionPlainLocation(session, sessionId, ownerUid) {
   return session.lastKnownLocation || null;
 }
 
-function encryptedLocationAad(sessionId, ownerUid, field, extra = {}) {
+function encryptedLocationAad(sessionId: string, ownerUid: string, field: string, extra: Record<string, unknown> = {}) {
   return {
     domain: 'pulsetrackr.sos.location',
     sessionId,
@@ -469,7 +467,7 @@ function encryptedLocationAad(sessionId, ownerUid, field, extra = {}) {
   };
 }
 
-async function recordNotificationDLQ({ sessionId, ownerUid, reason, error, payload, terminal, deleteAfter }) {
+async function recordNotificationDLQ({ sessionId, ownerUid, reason, error, payload, terminal, deleteAfter }: any) {
   await db.collection('sos_notification_dlq_private').doc(`${sessionId}_${Date.now()}`).set(withoutUndefined({
     sessionId,
     ownerUid,
@@ -496,7 +494,7 @@ async function recordNotificationDLQ({ sessionId, ownerUid, reason, error, paylo
   logger.error('SOS notification task moved to DLQ', { sessionId, reason, terminal });
 }
 
-function redactedDlqPayload(payload) {
+function redactedDlqPayload(payload: any) {
   return withoutUndefined({
     sessionId: payload?.sessionId,
     ownerUid: payload?.ownerUid,
@@ -505,7 +503,7 @@ function redactedDlqPayload(payload) {
   });
 }
 
-function combineNotificationSummaries(first, second) {
+function combineNotificationSummaries(first: any, second: any) {
   return {
     queued: numberOr(first?.queued, 0) + numberOr(second?.queued, 0),
     sent: numberOr(first?.sent, 0) + numberOr(second?.sent, 0),
@@ -515,13 +513,13 @@ function combineNotificationSummaries(first, second) {
   };
 }
 
-function destinationForChannel(contact, channel) {
+function destinationForChannel(contact: any, channel: string) {
   if (channel === 'app_push') return contact.appUserUid;
   if (channel === 'email') return contact.emailAddress;
   return contact.phoneNumber;
 }
 
-async function isSmsOptedOut(destination) {
+async function isSmsOptedOut(destination: unknown) {
   const docId = smsOptOutDocId(destination);
   if (!docId) return false;
 
@@ -529,10 +527,10 @@ async function isSmsOptedOut(destination) {
   return snapshot.exists && snapshot.data()?.status === 'opted_out';
 }
 
-async function recordSmsOptOutFromDelivery({ destination, errorMessage }) {
+async function recordSmsOptOutFromDelivery({ destination, errorMessage }: any) {
   const normalized = normalizePhoneNumberForSMS(destination);
   const docId = smsOptOutDocId(normalized);
-  if (!docId) return;
+  if (!docId || !normalized) return;
 
   const now = new Date();
   await db.collection('sos_sms_opt_outs_private').doc(docId).set(withoutUndefined({
@@ -546,7 +544,7 @@ async function recordSmsOptOutFromDelivery({ destination, errorMessage }) {
   }), { merge: true });
 }
 
-function providerNameForChannel(channel) {
+export function providerNameForChannel(channel: string) {
   if (channel === 'sms' || channel === 'phone_call' || channel === 'email') return 'twilio';
   if (channel === 'app_push') return 'firestore_app_alert';
   return 'unknown';
@@ -565,15 +563,10 @@ function notificationProviderEnv() {
   };
 }
 
-function publicWebhookUrl(request) {
+function publicWebhookUrl(request: any) {
   const forwardedProto = request.get('x-forwarded-proto');
   const protocol = forwardedProto || request.protocol || 'https';
   const host = request.get('host');
   const path = request.originalUrl || request.url || '';
   return `${protocol}://${host}${path}`;
 }
-
-exports.enqueueTrustedContactNotifications = enqueueTrustedContactNotifications;
-exports.enqueueSosNotificationTask = enqueueSosNotificationTask;
-exports.processSosNotificationTask = processSosNotificationTask;
-exports.providerNameForChannel = providerNameForChannel;
