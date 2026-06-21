@@ -4,9 +4,14 @@ process.env.NODE_ENV = 'test';
 
 const assert = require('node:assert/strict');
 const test = require('node:test');
-const { __test } = require('../src/index');
+const { __test } = require('../lib/index');
 
-const { deriveSignalOutcome, INCIDENT_CONCERN_REASONS, SIGNAL_COUNTER_FIELD } = __test;
+const {
+  counterTotalsFromShardDocs,
+  deriveSignalOutcome,
+  INCIDENT_CONCERN_REASONS,
+  SIGNAL_COUNTER_FIELD,
+} = __test;
 
 test('seen leaves status and severity unchanged', () => {
   const outcome = deriveSignalOutcome('seen', {
@@ -77,4 +82,22 @@ test('incident concern reasons cover App Store moderation paths', () => {
     'private_information',
     'spam_or_abuse',
   ]);
+});
+
+test('counter rollup totals sum only supported shard fields', () => {
+  const docs = [
+    { data: () => ({ counterField: 'confirmations', count: 2 }) },
+    { data: () => ({ counterField: 'confirmations', count: 3 }) },
+    { data: () => ({ counterField: 'disputes', count: 1 }) },
+    { data: () => ({ counterField: 'unknown_counter', count: 99 }) },
+  ];
+
+  assert.deepEqual(counterTotalsFromShardDocs(docs), {
+    confirmations: 5,
+    disputes: 1,
+    unsafe_reports: 0,
+    blocked_reports: 0,
+    cleared_reports: 0,
+    official_updates: 0,
+  });
 });
