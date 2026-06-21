@@ -35,10 +35,10 @@ ContentView (root)
 Data Layer
   ├── Incident.swift          → domain model (all enums + struct; optional coordinate)
   ├── IncidentStore           → @MainActor ObservableObject, CRUD, geo-region subscription
-  ├── SafetyIncidentRemoteStore → Firestore geohash-bounded listeners + Functions submit
-  ├── Geohash.swift           → standard geohash encode + neighbour/covering-cell logic
-  ├── SOSRemoteStore / SOSStore → Firebase Functions SOS activate/update/resolve + queue
-  ├── SOSTrustedContact       → local trusted-contact model + Keychain helper
+  ├── SafetyIncidentRemoteStore → Firestore geohash listeners + Functions submit/signal/query support
+  ├── Geohash.swift           → standard geohash encode + neighbour/covering-cell logic for client listeners
+  ├── SOSRemoteStore / SOSStore → Firebase Functions SOS activate/update/resolve + app-contact invites
+  ├── SOSTrustedContact       → local trusted-contact model + Keychain helper + app route payload
   ├── SOSPrivacyPolicy        → client-side SOS sharing limits
   ├── IncidentClassifier      → keyword-based auto-classification
   ├── LocationManager         → shared CLLocationManager wrapper (persists last-known)
@@ -46,10 +46,10 @@ Data Layer
 
 External
   ├── Firebase Auth           → anonymous sign-in before submissions
-  ├── Firebase Firestore      → safety_incidents_public (geohash prefix-range listeners)
-  ├── Firebase Functions      → submit_incident (geohash) + record_incident_signal + SOS callables
+  ├── Firebase Firestore      → safety_incidents_public plus private reports/counters/SOS/audit ledgers
+  ├── Firebase Functions      → submit/signal/query incident callables + scheduled counter rollups + SOS/app-contact/legal callables
   ├── Firebase Storage        → incident photo/voice evidence, scoped to reporter uid
-  ├── Twilio / SendGrid       → optional trusted-contact SOS delivery providers
+  ├── Twilio                  → optional trusted-contact SMS, voice, email, and STOP/START webhook
   └── Mapbox Maps SDK         → conditional compile (#if canImport(MapboxMaps))
 
 Localization
@@ -72,10 +72,10 @@ graph TD
     RS -->|uses| FB
     RS -->|Firebase Auth| Auth[Anonymous sign-in]
     RS -->|Firestore| FS[safety_incidents_public]
-    RS -->|Functions| FN[submit_incident]
+    RS -->|Functions| FN[submit_incident / record_incident_signal / record_incident_concern]
     SOSRS[SOSRemoteStore] -->|uses| FB
     SOSRS -->|Firebase Auth| Auth
-    SOSRS -->|Functions| SOSFN[activate_sos / append_sos_location / resolve_sos]
+    SOSRS -->|Functions| SOSFN[activate_sos / append_sos_location / resolve_sos / app contact invites]
 
     CV -->|@StateObject owns| LM[LocationManager]
     CV -->|.environmentObject| PMV[PulseMapView]
@@ -140,6 +140,7 @@ to Building fire, not Market fire. No new subtypes were added. Covered by
 |------|------|-----------|-------|--------|
 | `pulsetrackrApp.swift` | App entry | `pulsetrackrApp` | — | calls `FirebaseBootstrap` |
 | `FirebaseBootstrap.swift` | Firebase init guard | `FirebaseBootstrap` | Bundle plist | `FirebaseApp.configure()` |
+| `MapboxBootstrap.swift` | Mapbox access-token bootstrap | `MapboxBootstrap` | Generated app `Info.plist` (`MBXAccessToken`) | `MapboxOptions.accessToken` when Mapbox is linked |
 | `ContentView.swift` | Root tab view; drives geo-region subscription from location + radius; sets the app-wide color scheme | `ContentView`, `AppTab` | `@AppStorage hasSeenLaunch/launchLastSeenAt/launchLastSeenVersion/watchRadius/lightModeEnabled`, `LocationManager` | calls `IncidentStore.updateObservedRegion`, `SOSStore.record`; `@AppStorage` welcome-seen keys |
 | `LaunchView.swift` | Opening splash (`OpeningSplashView`) + first-run welcome (`LaunchView`) | `OpeningSplashView`, `LaunchView`, `FeatureRow` | — | `@AppStorage hasSeenLaunch` (+ reset keys) via callback |
 | `PulseMapView.swift` | Map tab facade | `PulseMapView` | — | — |
@@ -149,27 +150,44 @@ to Building fire, not Market fire. No new subtypes were added. Covered by
 | `FeedMapboxLayer.swift` | Mapbox layer for Feed | `FeedMapboxLayer`, `FeedMapboxPin` | `[Incident]` passed in | — |
 | `IncidentDetailView.swift` | Incident detail | `IncidentDetailView` + `detailPanel()` modifier | `IncidentStore.incident(withID:)` | `IncidentStore.record(_:for:)` |
 | `ReportIncidentView.swift` | Report new incident — **single unified form** (text + optional photo + optional voice + ongoing/past toggle, all submitted together). Photo evidence can be **taken with the camera or chosen from the library** (`CameraPicker` + `PhotosPicker`) | `ReportIncidentView` + private views (`ReportComposer`, `CameraPicker`, `StatusPill`, `SuggestionPanel`, …) | `LocationManager`, `IncidentClassifier`, `@AppStorage useApproximateLocation` | `IncidentStore.addIncident(...)` |
+| `IncidentEvidenceAttachment.swift` | Evidence upload value types | `IncidentEvidenceAttachment`, `UploadedIncidentEvidence` | photo/voice `Data` | Functions payload metadata after Storage upload |
 | `SettingsView.swift` | Settings (incl. Appearance / light-mode toggle) | `SettingsView` + private views incl. `PrecisionLocationRow` | `@AppStorage` (5 keys), `LocationManager` (auth + accuracy), `SOSStore` | `@AppStorage` (5 keys) |
 | `Incident.swift` | Domain model | `Incident`, `IncidentCategory`, `IncidentSubtype`, `IncidentSeverity`, `IncidentStatus`, `IncidentConfidence`, `CommunitySignal`, `IncidentUpdate` + `CLLocationCoordinate2D` extensions (`pulseDefaultCenter`, `isValid`, locale-aware distance) | — | — (value types) |
 | `IncidentStore.swift` | State manager + geo-region subscription | `IncidentStore`; `Incident.seedIncidents` is **`#if DEBUG` only** (previews) | `SafetyIncidentRemoteStore` (optional) | self: in-place O(1) mutation via `lookup[UUID:Int]`; `@Published lastSyncError` |
-| `SafetyIncidentRemoteStore.swift` | Firebase integration; geohash-bounded feed | `SafetyIncidentRemoteStore`, `SafetyIncidentRemoteStoreError` | Firestore `safety_incidents_public` via per-prefix `geohash` range listeners | Functions `submit_incident` + `record_incident_signal` (no direct Firestore writes); Storage evidence |
+| `SafetyIncidentRemoteStore.swift` | Firebase integration; geo-bounded feed plus generated contract DTO adoption | `SafetyIncidentRemoteStore`, `SafetyIncidentRemoteStoreError` | Firestore `safety_incidents_public` via per-prefix `geohash` range listeners | Functions `submit_incident`, `record_incident_signal`, `record_incident_concern`; Storage evidence |
 | `Geohash.swift` | Geohash encode + neighbour/covering-cell + radius→precision | `Geohash` (enum) | — | — (pure) |
 | `MapDefaults.swift` | Shared initial-camera logic | `MapDefaults` | `LocationManager.lastKnownCoordinate` | — |
 | `SharedComponents.swift` | Reusable UI: `cardPanel()`, `CategoryChip`, `LocationPromptCard` | view modifier + 2 views | `CLAuthorizationStatus` | opens Settings / requests permission |
 | `DesignSystem.swift` | Design tokens + brand (the `DS` enum: adaptive `DS.Color`, `DS.Font`, spacing/radius), shared `pulsePanel()`, button/field styles, severity ramp, and `PulseAppearance.apply()` for UIKit nav/tab chrome | `DS`, `PulseAppearance`, `DSPrimaryButtonStyle`, `DSSecondaryButtonStyle`, `DSSectionHeader`, `DSSeverityBadge` | `UITraitCollection` (adaptive light/dark colors) | UIKit appearance proxies |
 | `AppStorageKey.swift` | Centralized `@AppStorage` key names | `AppStorageKey` enum | — | — |
-| `SOSStore.swift` | SOS session/trail state machine + upload queue | `SOSStore` | `SOSRemoteStore`, `SOSTrustedContactStore`, `SOSPrivacyPolicy` | enqueues + syncs SOS events; `@Published` errors |
+| `SOSModels.swift` | Shared SOS client models | `SOSSession`, `SOSQueueEvent`, `SOSTrailPoint`, queue/delivery enums | — | value types for `SOSStore` and route UI |
+| `SOSStore.swift` | SOS session/trail state machine + upload queue + app trusted-contact invite facade | `SOSStore` | `SOSRemoteStore`, `SOSTrustedContactStore`, `SOSPrivacyPolicy` | enqueues + syncs SOS events; `@Published` errors/app-contact list |
+| `SOSOverlayView.swift` | In-app SOS activation/status overlay | `SOSOverlayView` | `SOSStore`, `LocationManager` | starts/stops SOS, retries queued updates |
+| `SOSRoutePlaybackView.swift` | Recent SOS trail and upload-state view | `SOSRoutePlaybackView` | `SOSStore.trail`, queued event counts | retry queued SOS events |
+| `SOSMapArtifacts.swift` | Map overlays for SOS trails and high-risk incidents | `IncidentDangerHalo`, `SOSTrailBreadcrumb`, `SOSLastKnownMarker` | `Incident`, `SOSMapTrailArtifact` | — |
 | `Localizable.xcstrings` | String Catalog (en source; es example) | — | resolved by `Text`/`LocalizedStringKey` | — |
 | `functions/src/geohash.js` | Server geohash encoder (matches `Geohash.swift`) | `encodeGeohash` | lat/lon | `geohash` field on public incidents |
 | `storage.rules` | Storage access rules | — | Auth uid | reporter-owned image/audio only, ≤10 MB |
-| `SOSRemoteStore.swift` | SOS Firebase Functions API | `SOSRemoteStore`, `SOSActivationPayload`, `SOSLocationUpdatePayload`, `SOSResolutionPayload` | Firebase configured state | Functions `activate_sos`, `append_sos_location`, `resolve_sos` |
-| `SOSTrustedContact.swift` | Local SOS contacts | `SOSTrustedContact`, `SOSTrustedContactStore`, notification target payloads | Keychain generic password item | Keychain generic password item |
+| `SOSRemoteStore.swift` | SOS Firebase Functions + app-alert API | `SOSRemoteStore`, `SOSActivationPayload`, `SOSLocationUpdatePayload`, `SOSResolutionPayload`, app trusted-contact invite/relationship/alert DTOs | Firebase configured state, `sos_app_alerts_private` for recipient-scoped alerts | Functions `activate_sos`, `append_sos_location`, `resolve_sos`, `create_app_trusted_contact_invite`, `accept_app_trusted_contact_invite`, `list_app_trusted_contacts` |
+| `SOSTrustedContact.swift` | Local SOS contacts | `SOSTrustedContact`, `SOSTrustedContactStore`, notification target payloads | Keychain generic password item | Keychain generic password item; app route metadata when present |
+| `SOSTrustedContactsView.swift` | Trusted-contact management UI | `SOSTrustedContactsView`, contact editor, contact picker | `SOSStore`, Contacts picker | local contacts, app invite create/accept calls |
 | `SOSPrivacyPolicy.swift` | SOS sharing limits | `SOSPrivacyPolicy`, `SOSPayloadCoding` | — | — |
 | `firebase.json` | Firebase backend config | Functions, Firestore, emulator config | — | deploy/emulator behavior |
 | `firestore.rules` | Firestore access rules | server-only SOS collections | Auth/custom claims | denies raw SOS client reads |
-| `functions/src/index.js` | Cloud Functions (incident feed + SOS) | `submit_incident`, `record_incident_signal`, `activate_sos`, `append_sos_location`, `resolve_sos`, `request_sos_session_access` | callable payloads | `safety_incidents_public`/`safety_reports_private`, private SOS + feed rate-limit collections |
+| `functions/src/index.js` | Cloud Functions export surface | callables/webhooks re-exported from bounded modules | module exports | — |
+| `functions/src/incidents/` | Incident callable and read-model module | `submit_incident`, `record_incident_signal`, `query_incidents_h3`, `rollupIncidentCounters`, `IncidentRepository` | callable payloads, H3 query cells, shared contract rules | `safety_incidents_public`, `safety_reports_private`, feed rate-limit collections, private counter shards/rollups |
+| `functions/src/moderation/` | Moderation callable module | `record_incident_concern`, `ModerationRepository` | callable concern reports | `safety_incident_concerns_private`, public concern counters |
+| `functions/src/sos/` | SOS callable module | `activate_sos`, `append_sos_location`, `resolve_sos`, app trusted-contact callables, `SOSRepository` | contract-shaped SOS payloads | private SOS session/location/app-alert/idempotency/rate-limit collections |
+| `functions/src/disclosure/` | Privileged disclosure callable module | legal request intake/review/access, `DisclosureRepository` | custom claims, legal request payloads | legal request, access-grant, and audit collections |
+| `functions/src/notifications/` | Notification domain module | trusted-contact fan-out and delivery summary helpers | SOS notification inputs | notification attempt records, Twilio provider APIs |
+| `functions/src/shared/` | Backend shared adapters | Firebase Admin, callable config, audit/util/H3/privacy helpers | runtime config, Firestore timestamps | shared audit records/helpers |
 | `functions/src/sosShared.js` | SOS backend validation helpers | payload sanitizers, idempotency helpers | callable payloads | pure values |
-| `functions/src/notificationProviders.js` | SOS notification adapters | Twilio SMS/voice, SendGrid email | provider secrets | provider delivery APIs |
+| `functions/src/notificationProviders.js` | SOS notification adapters | Twilio SMS, voice, and Comms Email | provider secrets | Twilio delivery APIs |
+| `functions/src/twilioOptOut.js` | Twilio inbound opt-out helpers | STOP/START parser, phone hash, signature validator | Twilio webhook params | pure values |
+| `functions/test/*.test.js` | Node backend tests | geohash, payload, H3/privacy, sharded counters, signal/concern, notification, SOS, Twilio opt-out suites | test fixtures/helpers | assertions only |
+| `packages/contract/` | Shared contract package | Zod schemas, generated TS validators/types, generated Swift Codable DTOs, shared incident signal rules | contract source schemas | generated `app/Generated/PulseTrackrContract.generated.swift` |
+| `docs/api/contract.md` | Generated API contract reference | incident/SOS/disclosure/notification schemas | `packages/contract` JSON Schema | regenerated by `npm run codegen` in `packages/contract` |
+| `docs/adr/`, `docs/runbooks/` | Operational architecture records and runbooks | ADRs, Firebase/SOS/feed/secrets procedures | implemented backend/client behavior | operator guidance |
 | `IncidentClassifier.swift` | Text classification | `IncidentClassifier`, `IncidentClassification` | title + summary strings | — (pure function) |
 | `LocationManager.swift` | Location wrapper | `LocationManager` | `CLLocationManager` | publishes `currentCoordinate`, `authorizationStatus`, `accuracyAuthorization` (full vs reduced); persists last-known coord to `UserDefaults` |
 
@@ -187,7 +205,7 @@ Incident
  ├── subtype: IncidentSubtype     → category, label, icon, isAlwaysHighRisk
  ├── severity: IncidentSeverity   → low / medium / high / urgent
  ├── status: IncidentStatus       → active / watching / resolved
- ├── coordinate: CLLocationCoordinate2D?  (fuzzy public coord; nil = location not shared)
+ ├── coordinate: CLLocationCoordinate2D?  (k-anonymous public H3-cell center; nil = not revealed)
  ├── reporterCoordinate: CLLocationCoordinate2D?  (exact, private)
  ├── reportedAt: Date
  ├── confirmations, disputes, unsafeReports, blockedReports, clearedReports, officialUpdates: Int
@@ -205,7 +223,7 @@ Incident
 | `hasLocation` | `coordinate?.isValid == true` — gates map pins and the directions UI |
 | `googleMapsAreaURL` / `googleMapsDirectionsURL` | Built with `URLComponents` (no force-unwrap); fall back to the default center only when location is unknown (and the directions UI is hidden in that case) |
 
-> **Note:** `coordinate` is optional. A report submitted with no location stores `nil` (it still appears in the feed, but is not pinned on the map and shows no distance/directions). The remote decoder also yields `nil` when a doc has no `latitude`/`longitude`, rather than fabricating a default pin. The public `coordinate` is also written with a `geohash` server-side for proximity queries (see §9).
+> **Note:** `coordinate` remains optional in the value model so old local values, previews, and defensive remote decoding can represent missing coordinates without fabricating a default pin. Real report submission is location-required: the report form needs a current or last-known coordinate, and `submit_incident` rejects missing, partial, or invalid latitude/longitude. The public `coordinate` is omitted until the H3 k-anonymity threshold is met; once revealed it is the H3 cell center, stamped with `public_h3_cell` and `geohash` server-side for proximity queries (see §9).
 
 ### Category → Subtype Hierarchy
 
@@ -256,7 +274,8 @@ User types title/summary
   → user accepts or manually overrides category/subtype/severity
   → LocationManager.currentCoordinate captured
   → IncidentStore.addIncident(...)
-      ├── publicCoordinate = exact ? fuzz(exact, 140–260m offset) : nil   (no fake pin)
+      ├── reportCoordinate = current location or last-known location (required by UI/backend)
+      ├── publicCoordinate omitted until H3 k-anonymity threshold; revealed coordinate = public H3 cell center
       ├── append to incidents array (O(1) amortized)
       ├── update lookup[UUID → index]
       └── if remoteStore: Task { ... }
@@ -267,10 +286,12 @@ User types title/summary
             └── on failure → set IncidentStore.lastSyncError (surfaced to UI)
 ```
 
-### Remote Sync (geohash-bounded listeners)
+### Remote Sync (geo-bounded read model)
 
 The feed is **proximity-bounded** — it no longer streams every incident worldwide
-(critical for a global release). See §9 for the geohash mechanics.
+(critical for a global release). The current iOS listener path uses public geohash
+prefix ranges; the backend also exposes `query_incidents_h3` for the Phase 4
+hierarchical H3 feed read path. See §9 for the geo mechanics.
 
 ```
 ContentView (on location fix or watchRadius change)
@@ -302,10 +323,13 @@ IncidentDetailView → user taps signal button
 
 The public feed is **read-only to clients** (`firestore.rules`), so signals route
 through the `record_incident_signal` callable — the client never writes the counters
-or status/severity directly. The function increments the matching counter atomically
-(`FieldValue.increment`) and **derives status/severity server-side** (`deriveSignalOutcome`,
-a faithful port of the iOS rules), so a client cannot forge them. Resolved incidents
-are no-ops, and signals are per-user rate-limited (2 s cooldown, 120/hr). The local
+or status/severity directly. The function increments the matching private counter
+shard, reads shard totals for state derivation, and **derives status/severity
+server-side** (`deriveSignalOutcome`, shared from the contract foundation), so a
+client cannot forge them. `rollupIncidentCounters` periodically projects shard
+totals back onto `safety_incidents_public`, making public counters eventually
+consistent while keeping the write path hot-spot resistant. Resolved incidents are
+no-ops, and signals are per-user rate-limited (2 s cooldown, 120/hr). The local
 mutation above is purely optimistic; the geohash listener later reconciles to server
 truth. The `roadBlocked` rule only *raises* a Low incident's floor to Medium — it
 never downgrades a higher severity (closing a severity-suppression vector).
@@ -433,9 +457,10 @@ are themselves `#if DEBUG` (since `#Preview` macros compile into release builds)
 
 ### ✅ Resolved — Other audited items
 
-- **No fabricated location.** `addIncident` and the remote decoder store `nil`
-  rather than a default-city pin when no location is shared; pins/distance/directions
-  gate on `coordinate`/`hasLocation`.
+- **No fabricated location.** The client and backend require a real current or
+  last-known report coordinate for submission. The optional coordinate field still
+  decodes defensively as `nil` rather than a default-city pin for old/local data;
+  pins/distance/directions gate on `coordinate`/`hasLocation`.
 - **No silent network failures.** `submitIncident`/`recordSignal` retry with backoff
   and surface `IncidentStore.lastSyncError`; SOS `markNotified` failures surface via
   `trustedContactError` (previously `try?`-swallowed).
@@ -457,10 +482,16 @@ paths are now server-gated:
   `safety_feed_rate_limits_private` collection (TTL via `deleteAfter`).
 - **Signal trust** — community confirm/dispute previously did a direct Firestore
   `updateData` (silently denied by `allow write: if false`). It now flows through the
-  `record_incident_signal` callable, which owns the counter increment and derives
-  status/severity itself — clients can no longer set them. Same rate-limit pattern
-  (2 s / 120 hr). The `roadBlocked` rule was also corrected to only raise (never
-  lower) severity. Covered by `functions/test/incidentSignal.test.js`.
+  `record_incident_signal` callable, which owns the private shard increment and
+  derives status/severity itself — clients can no longer set them. Public counter
+  fields are projected by `rollupIncidentCounters` instead of being hot-spotted on
+  every signal. Same rate-limit pattern (2 s / 120 hr). The `roadBlocked` rule was
+  also corrected to only raise (never lower) severity. Covered by
+  `functions/test/incidentSignal.test.js`.
+- **Moderation concerns** — "Report concern" routes through `record_incident_concern`,
+  which validates the reason, rate-limits the caller, writes
+  `safety_incident_concerns_private`, and increments public concern metadata for
+  operations review. Clients do not write moderation fields directly.
 
 ---
 
@@ -486,6 +517,8 @@ paths are now server-gated:
 
 SOS support is intentionally split from incident reporting. Trusted contacts are stored locally through `SOSTrustedContactStore`, and remote SOS calls are only available through `SOSRemoteStore.makeIfConfigured()` when `GoogleService-Info.plist` is present. That plist is **git-ignored** (each developer supplies their own; see `GoogleService-Info.plist.example` and `FIREBASE_SETUP.md`).
 
+App-to-app trusted contacts are explicit and directional. If User A creates an app invite and User B accepts it, the backend stores only `A -> B`: A's SOS can create an app-visible alert for B, but B's SOS cannot alert A through that relationship. The reverse direction requires B to create a separate invite and A to accept it.
+
 ### Client payloads
 
 `activate_sos` receives:
@@ -502,48 +535,87 @@ SOS support is intentionally split from incident reporting. Trusted contacts are
 
 `resolve_sos` receives `session_id`, `resolution_reason`, `resolved_at`, and an optional final location.
 
+App trusted-contact callables:
+
+- `create_app_trusted_contact_invite`: owner creates a short-lived code for one trusted contact.
+- `accept_app_trusted_contact_invite`: recipient accepts the code and creates the one-way relationship.
+- `list_app_trusted_contacts`: returns outgoing relationships that this user can alert and incoming relationships that can alert this user.
+- `revoke_app_trusted_contact`: either side can revoke an accepted relationship.
+
 ### Backend collections
 
 - `sos_sessions_private`: server-only active/resolved session records.
 - `sos_location_updates_private`: server-only append-only live update records, with retention/TTL.
 - `sos_notification_attempts_private`: trusted-contact notification attempts, updated with `sent`, `failed`, or `provider_unconfigured`.
+- `sos_notification_tasks_private`: Cloud Tasks saga state for asynchronous SOS notification fan-out.
+- `sos_notification_dlq_private`: terminal notification task failures with redacted payload/error context for operations follow-up.
+- `sos_sms_opt_outs_private`: hashed-phone STOP/START ledger for trusted-contact SMS opt-outs, written only by the Twilio webhook path.
+- `sos_app_trusted_contact_invites_private`: server-only short-lived one-way app invite records.
+- `sos_app_trusted_contacts_private`: server-only accepted one-way app relationships.
+- `sos_app_alerts_private`: app-readable SOS alert records scoped by `recipientUid == request.auth.uid`; writes are server-only.
 - `sos_idempotency_private`: maps user + client session UUID to the canonical server session.
 - `sos_rate_limits_private`: per-user activation cooldown/window tracking.
 - `sos_access_grants_private`: short-lived privileged grants for authorized responder/admin flows.
-- `sos_access_audit`: append-only audit events for admin, care-team, and law-enforcement access attempts.
+- `sos_law_enforcement_requests_private`: company-controlled legal request intake/review records tied to a specific SOS session.
+- `sos_access_audit`: hash-chained, append-only audit events for admin, care-team, and law-enforcement access attempts. Audit collection reads are limited to internal `sosAdmin`/`careTeam` users; law-enforcement disclosure status stays scoped through backend functions.
+- `safety_incident_concerns_private`: private moderation reports created by `record_incident_concern`.
 
 ### Access limits
 
-Law-enforcement and admin access must be audited, time-limited, and restricted to active SOS sessions. PulseTrackr should not imply automatic law-enforcement dispatch. Any authorized responder access should happen through privileged backend code that verifies the session is active, returns only the minimum exact-location/contact data needed, records actor/reason/decision/expiry in `sos_access_audit`, and expires access unless the session remains active and policy allows renewal.
+Law-enforcement and admin access must be audited, time-limited, and restricted to active SOS sessions. PulseTrackr should not imply automatic law-enforcement dispatch. Any law-enforcement access requires a recorded legal request, internal `sosAdmin` approval, a matching `legal_request_id`, active-session verification, minimum scoped disclosure, and audit records in `sos_access_audit`.
 
 ### Backend delivery implementation
 
 The Firebase backend now lives in this repo:
 
 - `firebase.json` configures Firestore rules/indexes, Storage rules, and local emulators for Auth, Functions, and Firestore.
-- `firestore.rules` denies direct client access to raw SOS location/session/notification/idempotency/rate-limit collections and to `safety_feed_rate_limits_private`. `safety_incidents_public` is client-readable but client-unwritable: new reports go through `submit_incident` (which also stamps the `geohash`) and community signals go through `record_incident_signal`.
+- `firestore.rules` denies direct client access to raw SOS location/session/notification/task/DLQ/idempotency/rate-limit collections, audit chain heads, disclosure key releases, role-claim ledgers, `safety_feed_rate_limits_private`, and private concern records. `safety_incidents_public` is client-readable but client-unwritable: new reports go through `submit_incident`, community signals go through `record_incident_signal`, and concern reports go through `record_incident_concern`.
 - `storage.rules` scopes incident evidence to `incident_reports/{uid}/…`: the owner may create image/audio ≤10 MB; everything else denied.
-- `functions/src/index.js` implements the callable endpoints:
-  - `submit_incident`: auth/App Check, payload sanitization, **per-user rate limit** (15 s cooldown, 20/hr via `safety_feed_rate_limits_private`), exact write to `safety_reports_private` + fuzzed/geohashed public write — all in one transaction.
-  - `record_incident_signal`: auth/App Check, per-user rate limit (2 s cooldown, 120/hr), server-authoritative counter increment + status/severity derivation (`deriveSignalOutcome`); the only write path to the read-only public feed. No-op on resolved incidents.
-  - `activate_sos`: auth/App Check, idempotency, rate limits, server-side trail caps, private session write, audit write, notification queue + delivery attempt.
-  - `append_sos_location`: auth/App Check, owner check, active/unexpired session check, idempotent sequence updates, append-only update records.
-  - `resolve_sos`: auth/App Check, owner check, supported resolution reasons, idempotent resolution, audit write.
-  - `request_sos_session_access`: custom-claim gated access for `sosAdmin`, `careTeam`, or `lawEnforcement`, active-session only, audited, short-lived grants.
+- `functions/src/index.js` is now the export surface; callable implementations live in bounded modules with handler/domain/repository boundaries:
+  - `submit_incident`: auth/App Check, payload sanitization, **per-user rate limit** (15 s cooldown, 20/hr via `safety_feed_rate_limits_private`), exact write to `safety_reports_private`, H3 metadata on the private report, and public coordinate/geohash reveal only after the k-anonymous H3 threshold is met.
+  - `record_incident_signal`: auth/App Check, per-user rate limit (2 s cooldown, 120/hr), server-authoritative private counter-shard increment + status/severity derivation (`deriveSignalOutcome`); the only write path to the read-only public feed. No-op on resolved incidents.
+  - `rollupIncidentCounters`: scheduled every 5 minutes; folds private counter shards into the public read model and writes a private rollup record for operations review.
+  - `query_incidents_h3`: authenticated hierarchical H3 feed query for the scalable backend read path; queries revealed public H3 cells, filters expired/resolved incidents, and returns contract-shaped public incident summaries plus query metadata.
+  - `record_incident_concern`: auth/App Check, supported moderation reasons, per-user rate limit, private concern record, and public concern counter/timestamp update.
+  - `activate_sos`: auth/App Check, idempotency, rate limits, server-side trail caps, encrypted private session location/trail write, chained audit write, and Cloud Tasks enqueue for notification fan-out.
+  - `append_sos_location`: auth/App Check, owner check, active/unexpired session check, idempotent encrypted sequence updates, append-only update records, and app alert live-location refresh.
+  - `resolve_sos`: auth/App Check, owner check, supported resolution reasons, idempotent encrypted final-location resolution, chained audit write, and app alert resolution.
+  - `create_app_trusted_contact_invite`, `accept_app_trusted_contact_invite`, `list_app_trusted_contacts`, `revoke_app_trusted_contact`: explicit one-way app trusted-contact workflow.
+  - `twilio_sms_webhook`: signed Twilio inbound-message webhook for STOP/START/HELP handling; writes hashed opt-out status and lets future SMS attempts skip opted-out contacts.
+  - `record_law_enforcement_request`: `sosAdmin`/`careTeam` intake for legal requests without location disclosure.
+  - `review_law_enforcement_request`: `sosAdmin` approval/denial for scoped, expiring law-enforcement access.
+  - `request_sos_session_access`: custom-claim gated access for `sosAdmin`, `careTeam`, or `lawEnforcement`, active-session only, chained audit, short-lived grants, and disclosure key-release ledger records. The `lawEnforcement` role must include an approved matching `legal_request_id`.
+  - `mint_sos_role_claim` / `revoke_sos_role_claim`: `sosAdmin`-only audited custom-claim management with role expiry metadata and a private grant ledger.
+- `processSosNotifications`: Cloud Tasks worker for SOS notification fan-out. It retries provider/app-alert delivery using task queue retry policy, marks completed sessions with `notificationSagaStatus = completed`, and writes terminal failures to `sos_notification_dlq_private` while compensating the session with `notificationSagaStatus = failed`.
+- `packages/contract` is the cross-platform source of truth for incident/SOS/disclosure/notification payload schemas and incident state transitions. Its codegen emits Swift Codable DTOs used by the iOS remote stores and TS/Zod validators used by the Functions build.
+- `docs/api/contract.md` is generated from the contract JSON Schema by `packages/contract/codegen/generate-api-docs.cjs`; CI fails if the generated docs drift.
+- `docs/adr/` records the contract, privacy, resilience, and scaled read-model decisions; `docs/runbooks/` covers Firebase deploys, incident feed operations, SOS operations, and secret rotation.
+- `.github/workflows/phase1-contract.yml` gates the contract foundation with codegen drift checks, Functions build/tests, Firestore rules emulator tests, and an iOS simulator build.
 - `functions/src/sosShared.js` keeps the validation logic pure and covered by `node --test`.
-- `functions/src/notificationProviders.js` sends SMS/phone calls with Twilio and email with SendGrid when credentials are configured. Missing credentials are recorded as `provider_unconfigured`, never as a successful alert.
+- `functions/src/notificationProviders.js` sends SMS, phone calls, and email through Twilio when credentials are configured. Missing credentials are recorded as `provider_unconfigured`, never as a successful alert.
+- The iOS client writes report, signal, concern, SOS activate/location/resolve actions to a durable JSON outbox under Application Support and drains it on launch/foreground. SOS also persists its local session/trail/queue snapshot so replay survives app termination.
 
-Production still needs provider secrets, sender verification, delivery-receipt monitoring, and a documented incident-response owner before any live SOS launch. The code path is now real, but operations must be real too.
+Production still needs provider secrets, `SOS_ENVELOPE_KEK`, sender verification, delivery-receipt monitoring, and a documented incident-response owner before any live SOS launch. The code path is now real, but operations must be real too.
 
 ### Firebase project state
 
 The local Firebase CLI can see the `pulsetracker-0000` Firebase project, and `.firebaserc` maps `default`/`production` to that project. The live project currently has existing Python functions, so this repo uses the separate Functions codebase `pulsetrackr-sos` for SOS to avoid deleting or reconciling unrelated deployed functions. A deploy still requires intentional operator action:
 
 ```sh
-firebase deploy --only functions,firestore:rules,firestore:indexes,storage
+firebase deploy --only functions:pulsetrackr-sos,firestore:rules,firestore:indexes,storage --project pulsetracker-0000
 ```
 
-Before deploy, configure secrets with `firebase functions:secrets:set` for Twilio and SendGrid, then assign custom responder claims through `functions/scripts/setSosRoleClaim.js`.
+Before deploy, configure Twilio secrets with `firebase functions:secrets:set`:
+`TWILIO_ACCOUNT_SID`, `TWILIO_API_KEY_SID`, `TWILIO_API_KEY_SECRET`,
+`TWILIO_AUTH_TOKEN`, `TWILIO_FROM_NUMBER`, and `TWILIO_EMAIL_FROM_ADDRESS`.
+Also configure `SOS_ENVELOPE_KEK` with `firebase functions:secrets:set`; generate
+it with `openssl rand -base64 32` and rotate by adding a new Secret Manager
+version plus a new `SOS_ENVELOPE_KEY_VERSION`, deploying, verifying decrypt/release,
+and disabling the old version after the SOS retention window.
+Use `TWILIO_EMAIL_FROM_NAME`, `TWILIO_VOICE_TWIML`, and
+`TWILIO_WEBHOOK_PUBLIC_URL` as non-secret environment overrides when needed, then
+assign custom responder claims through `mint_sos_role_claim`; keep
+`functions/scripts/setSosRoleClaim.js` for bootstrap/break-glass only.
 
 ---
 
@@ -551,25 +623,42 @@ Before deploy, configure secrets with `firebase functions:secrets:set` for Twili
 
 Groundwork for a public, multi-region release.
 
-### Geo-bounded incident feed (geohash)
+### Geo-bounded incident feed (H3 + geohash)
 
-The app does **not** stream every incident worldwide. Each public incident carries a
-standard geohash, and the client queries only the cells around the user.
+The app does **not** stream every incident worldwide. Each revealed public incident
+carries a public H3 cell plus a standard geohash derived from the k-anonymous H3
+cell center, and clients query only cells around the user.
 
-- **Write side** — `submit_incident` stores `geohash` (precision 9) on each
-  `safety_incidents_public` doc via `functions/src/geohash.js`. Byte-for-byte
-  compatible with the client encoder in `app/Geohash.swift`.
-- **Read side** — `Geohash.coveringPrefixes(lat, lon, radiusMeters)` picks a
-  precision sized to the watch radius and returns the centre cell + its 8 neighbours.
-  `SafetyIncidentRemoteStore.observeIncidents(near:radiusMeters:)` attaches one
-  listener per prefix as a `geohash` range query `[prefix, prefix+"~")`, merges the
-  buckets, then filters to the exact radius + active statuses on the client.
+- **Write side** — `submit_incident` stores exact coordinates only in
+  `safety_reports_private`, computes private H3 cells, and writes public
+  `latitude`/`longitude`/`geohash` only when at least `k` distinct reporters are
+  present in the cell (default `k=3`, resolution 8 with resolution 7 fallback).
+  The public coordinate is the H3 cell center. The public doc also carries
+  `public_h3_cell`, `public_h3_resolution`, and a `geohash` encoded through
+  `functions/src/geohash.js`, byte-for-byte compatible with the client encoder in
+  `app/Geohash.swift`.
+- **Read side, current iOS listener** — `Geohash.coveringPrefixes(lat, lon, radiusMeters)`
+  picks a precision sized to the watch radius and returns the centre cell + its 8
+  neighbours. `SafetyIncidentRemoteStore.observeIncidents(near:radiusMeters:)`
+  attaches one listener per prefix as a `geohash` range query `[prefix, prefix+"~")`,
+  merges the buckets, then filters to the exact radius + active statuses on the client.
+- **Read side, Phase 4 backend query** — `query_incidents_h3` expands the user's
+  center/radius into bounded resolution-8 and resolution-7 H3 cells, queries
+  `safety_incidents_public.public_h3_cell`, filters expired/resolved results, and
+  returns a compact incident list plus query metadata. This gives the backend an
+  explicit scalable read path while the app can continue using geohash listeners
+  until it is swapped over.
 - **Re-subscription** — driven by `ContentView`; re-subscribes when the user moves
   >500 m or changes `watchRadius`.
-- **Index** — orders by the single `geohash` field (auto-indexed). No composite
-  index needed.
-- **Backfill** — docs written before this change lack `geohash` and are skipped by
-  geo-queries; backfill with `encodeGeohash(lat, lng)` if pre-existing public data.
+- **Index** — public reads order by the single `geohash` field (auto-indexed).
+  The backend H3 query uses the composite `public_h3_cell/deleteAfter` index.
+  Private reveal checks use composite indexes on `privateH3Cell/deleteAfter` and
+  `privateH3ParentCell/deleteAfter`. Counter shard reads use the private shard index
+  declared in `firestore.indexes.json`; rollup queue ordering uses Firestore's
+  single-field `updatedAt` index with TTL declared as a field override.
+- **Backfill** — docs without a revealed `geohash` are skipped by geo-queries.
+  Do not backfill old exact coordinates into the public feed; let TTL expire them
+  or migrate them through the H3/k-anonymity policy.
 
 > **⚠️ Deploy gotcha (client/backend version skew).** The client query is
 > `order(by: "geohash")`, which Firestore **excludes any document missing that
@@ -626,6 +715,10 @@ All four maps share `MapDefaults`:
 - `pulsetrackrTests/GeohashTests.swift` — encoder round-trip, neighbour reciprocity,
   and full circle-coverage (no edge misses).
 - `functions/test/geohash.test.js` — server encoder agrees with the client.
+- `functions/test/privacyPrimitives.test.js` — H3 k-anonymity metadata, bounded
+  H3 query expansion, and envelope encryption behavior.
+- `functions/test/incidentSignal.test.js` — signal state transitions and private
+  counter-shard rollup totals.
 - `functions/test/geoQuery.emulator.js` (`npm run test:geo`) — end-to-end against the
   **Firestore emulator**: nearby active incidents returned, far/other-continent and
   resolved excluded, widening the radius pulls in the edge incident.
