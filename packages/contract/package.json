@@ -1,0 +1,29 @@
+{
+  "name": "@pulsetrackr/contract",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Single source of truth for PulseTrackr client/server data contracts and the incident state machine. Codegen targets: TypeScript (native), Swift (via JSON Schema).",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "codegen": "npm run build && node codegen/generate.cjs && node codegen/generate-api-docs.cjs",
+    "docs:api": "npm run build && node codegen/generate.cjs && node codegen/generate-api-docs.cjs",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "quicktype": "^23.2.6",
+    "typescript": "^5.6.3",
+    "zod-to-json-schema": "^3.25.2"
+  }
+}
