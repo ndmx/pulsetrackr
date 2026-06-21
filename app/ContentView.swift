@@ -11,6 +11,7 @@ struct ContentView: View {
     @AppStorage(AppStorageKey.launchLastSeenVersion) private var launchLastSeenVersion = ""
     @AppStorage(AppStorageKey.watchRadius) private var watchRadius = 3.0
     @AppStorage(AppStorageKey.lightModeEnabled) private var lightModeEnabled = false
+    @Environment(\.scenePhase) private var scenePhase
 
     private let welcomeResetInterval: TimeInterval = 30 * 24 * 60 * 60
 
@@ -110,14 +111,32 @@ struct ContentView: View {
         .environmentObject(incidentStore)
         .environmentObject(locationManager)
         .environmentObject(sosStore)
+        .overlay(alignment: .top) {
+            if let alert = sosStore.activeAppAlert {
+                SOSAppAlertBanner(alert: alert)
+                    .padding(.horizontal, DS.Space.lg)
+                    .padding(.top, DS.Space.md)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+            }
+        }
         .onReceive(locationManager.$currentLocation) { location in
             guard let location else { return }
             sosStore.record(location: location)
             incidentStore.updateObservedRegion(center: location.coordinate, radiusKm: watchRadius)
         }
+        .onAppear {
+            sosStore.startObservingAppAlerts()
+            incidentStore.retryPendingOutbox()
+            sosStore.retryQueuedEvents()
+        }
         .onChange(of: watchRadius) { _, newRadius in
             guard let coordinate = locationManager.currentCoordinate else { return }
             incidentStore.updateObservedRegion(center: coordinate, radiusKm: newRadius)
+        }
+        .onChange(of: scenePhase) { _, phase in
+            guard phase == .active else { return }
+            incidentStore.retryPendingOutbox()
+            sosStore.retryQueuedEvents()
         }
         .onReceive(sosStore.$session) { session in
             locationManager.setEmergencyTrackingActive(session?.isActive == true)
@@ -130,6 +149,51 @@ private enum AppTab {
     case feed
     case report
     case settings
+}
+
+private struct SOSAppAlertBanner: View {
+    var alert: SOSAppAlert
+
+    var body: some View {
+        HStack(alignment: .top, spacing: DS.Space.md) {
+            Image(systemName: "sos.circle.fill")
+                .font(.title2)
+                .foregroundStyle(.white)
+                .frame(width: 42, height: 42)
+                .background(DS.Color.alert, in: Circle())
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("\(alert.ownerDisplayName) activated SOS")
+                    .font(DS.Font.bodyBold())
+                    .foregroundStyle(DS.Color.textPrimary)
+                    .lineLimit(2)
+
+                Text(locationText)
+                    .font(DS.Font.caption())
+                    .foregroundStyle(DS.Color.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: DS.Space.sm)
+        }
+        .padding(DS.Space.md)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: DS.Radius.md, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: DS.Radius.md, style: .continuous)
+                .stroke(DS.Color.alert.opacity(0.42), lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.24), radius: 14, y: 8)
+    }
+
+    private var locationText: String {
+        guard let location = alert.lastKnownLocation else {
+            return "Open PulseTrackr and try to contact them or local help. PulseTrackr does not dispatch responders."
+        }
+
+        let latitude = String(format: "%.5f", location.latitude)
+        let longitude = String(format: "%.5f", location.longitude)
+        return "Last phone location: \(latitude), \(longitude). Contact them or local help; PulseTrackr does not dispatch responders."
+    }
 }
 
 #Preview {

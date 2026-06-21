@@ -1,4 +1,5 @@
 import CoreLocation
+import CryptoKit
 import FirebaseAuth
 import FirebaseCore
 import FirebaseFirestore
@@ -23,6 +24,9 @@ final class SafetyIncidentRemoteStore {
     static let activeStatuses: Set<IncidentStatus> = [.active, .watching]
 
     static func makeIfConfigured() -> SafetyIncidentRemoteStore? {
+        // Never attach a live Firebase-backed store under XCTest: unit tests must not
+        // make network calls (they would block the MainActor and starve parallel tests).
+        if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil { return nil }
         guard FirebaseBootstrap.configureIfAvailable() else { return nil }
         return SafetyIncidentRemoteStore()
     }
@@ -99,6 +103,28 @@ final class SafetyIncidentRemoteStore {
             .sorted { $0.reportedAt > $1.reportedAt }
     }
 
+    /// One-shot scalable feed read via the backend H3 callable. The backend expands the
+    /// covering H3 cells and filters expiry/status/privacy server-side, returning
+    /// contract-shaped public incidents. Used as a complement to the live geohash
+    /// listener (cold start / manual refresh), not a replacement for it.
+    func queryIncidentsH3(
+        near center: CLLocationCoordinate2D,
+        radiusMeters: Double,
+        limit: Int = 100
+    ) async throws -> [Incident] {
+        try await ensureSignedIn()
+        let result = try await callFunction(named: "query_incidents_h3", data: [
+            "latitude": center.latitude,
+            "longitude": center.longitude,
+            "radius_meters": radiusMeters,
+            "limit": limit
+        ])
+        guard let body = result.data as? [String: Any] else {
+            throw SafetyIncidentRemoteStoreError.invalidResponse
+        }
+        return Self.decodeCallableIncidents(body)
+    }
+
     func submitIncident(
         title: String,
         summary: String,
@@ -114,24 +140,45 @@ final class SafetyIncidentRemoteStore {
     ) async throws -> String {
         try await ensureSignedIn()
 
-        var payload: [String: Any] = [
-            "title": title,
-            "summary": summary,
-            "category": category.rawValue,
-            "subtype": subtype.rawValue,
-            "severity": severity.rawValue,
-            "status": status.rawValue,
-            "neighborhood": neighborhood,
-            "use_approximate_location": useApproximateLocation,
-            "client_ref": clientRef,
-            "source": "ios",
-            "evidence": evidence.map(\.payload)
-        ]
-
-        if let reporterCoordinate {
-            payload["latitude"] = reporterCoordinate.latitude
-            payload["longitude"] = reporterCoordinate.longitude
+        // Build the request from the shared contract type (ContractDTO, generated from
+        // @pulsetrackr/contract) so the wire shape is enforced by the compiler — a single
+        // source of truth shared with the Cloud Function. The app's domain enums share
+        // rawValues with the generated ContractDTO enums, so they bridge by rawValue.
+        guard
+            let dtoCategory = ContractDTO.IncidentCategory(rawValue: category.rawValue),
+            let dtoSubtype = ContractDTO.IncidentSubtype(rawValue: subtype.rawValue),
+            let dtoSeverity = ContractDTO.IncidentSeverity(rawValue: severity.rawValue),
+            let dtoStatus = ContractDTO.IncidentStatus(rawValue: status.rawValue)
+        else {
+            throw SafetyIncidentRemoteStoreError.invalidResponse
         }
+
+        let dtoEvidence = evidence.map { item in
+            ContractDTO.IncidentEvidence(
+                contentType: item.contentType,
+                durationSeconds: item.durationSeconds,
+                kind: ContractDTO.IncidentEvidenceKind(rawValue: item.kind.rawValue) ?? .photo,
+                sizeBytes: item.sizeBytes,
+                storagePath: item.storagePath
+            )
+        }
+
+        let request = ContractDTO.SubmitIncidentPayload(
+            category: dtoCategory,
+            clientRef: clientRef,
+            evidence: dtoEvidence,
+            latitude: reporterCoordinate?.latitude,
+            longitude: reporterCoordinate?.longitude,
+            neighborhood: neighborhood,
+            severity: dtoSeverity,
+            source: "ios",
+            status: dtoStatus,
+            subtype: dtoSubtype,
+            summary: summary,
+            title: title,
+            useApproximateLocation: useApproximateLocation
+        )
+        let payload = try Self.callablePayload(from: request)
 
         let result = try await callFunction(named: "submit_incident", data: payload)
         guard
@@ -185,14 +232,14 @@ final class SafetyIncidentRemoteStore {
     /// no longer sends those — it cannot be trusted to set them.
     func recordSignal(
         _ signal: CommunitySignal,
-        forIncidentWithID id: UUID
+        forIncidentWithID id: String
     ) async throws {
         try await ensureSignedIn()
 
         _ = try await callFunction(
             named: "record_incident_signal",
             data: [
-                "incident_id": id.uuidString,
+                "incident_id": id,
                 "signal": signal.rawValue
             ]
         )
@@ -203,14 +250,14 @@ final class SafetyIncidentRemoteStore {
     /// rate-limited moderation record tied to the anonymous reporter.
     func recordConcern(
         _ reason: IncidentConcernReason,
-        forIncidentWithID id: UUID
+        forIncidentWithID id: String
     ) async throws {
         try await ensureSignedIn()
 
         _ = try await callFunction(
             named: "record_incident_concern",
             data: [
-                "incident_id": id.uuidString,
+                "incident_id": id,
                 "reason": reason.rawValue
             ]
         )
@@ -223,6 +270,18 @@ final class SafetyIncidentRemoteStore {
 
     private func callFunction(named name: String, data: [String: Any]) async throws -> HTTPSCallableResult {
         try await functions.httpsCallable(name).call(data)
+    }
+
+    /// Encodes a Codable contract request into the `[String: Any]` dictionary that
+    /// Firebase callables expect, preserving the contract's snake_case wire keys
+    /// (e.g. `client_ref`). Optional fields encode via `encodeIfPresent`, so absent
+    /// values are simply omitted — matching the previous hand-built payload.
+    private static func callablePayload<T: Encodable>(from value: T) throws -> [String: Any] {
+        let data = try JSONEncoder().encode(value)
+        guard let dictionary = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw SafetyIncidentRemoteStoreError.invalidResponse
+        }
+        return dictionary
     }
 
     private func putData(
@@ -244,15 +303,21 @@ final class SafetyIncidentRemoteStore {
     }
 
     private static func incident(from document: QueryDocumentSnapshot) -> Incident? {
-        let data = document.data()
-        let id = UUID(uuidString: document.documentID) ?? UUID()
-        let category = IncidentCategory(rawValue: string(data["category"]) ?? "") ?? .community
-        let subtype = IncidentSubtype(rawValue: string(data["subtype"]) ?? "") ?? IncidentSubtype.defaultSubtype(for: category)
-        let severity = IncidentSeverity(rawValue: string(data["severity"]) ?? "") ?? .medium
-        let status = IncidentStatus(rawValue: string(data["status"]) ?? "") ?? .active
-        // Missing coordinates → nil (location unknown), not a fabricated default pin.
+        guard let dto = publicIncidentDTO(from: document.data()) else { return nil }
+        return incident(fromDTO: dto, documentID: document.documentID)
+    }
+
+    /// Maps a decoded contract public-incident DTO to the app's domain model. Shared
+    /// by the Firestore listener path and the H3 callable path so both produce
+    /// identical `Incident` values from the same contract type.
+    private static func incident(fromDTO dto: ContractDTO.PublicIncident, documentID: String) -> Incident {
+        let id = stableIncidentID(for: documentID)
+        let category = IncidentCategory(rawValue: dto.category.rawValue) ?? .community
+        let subtype = IncidentSubtype(rawValue: dto.subtype.rawValue) ?? IncidentSubtype.defaultSubtype(for: category)
+        let severity = IncidentSeverity(rawValue: dto.severity.rawValue) ?? .medium
+        let status = IncidentStatus(rawValue: dto.status.rawValue) ?? .active
         let coordinate: CLLocationCoordinate2D?
-        if let latitude = double(data["latitude"]), let longitude = double(data["longitude"]) {
+        if let latitude = dto.latitude, let longitude = dto.longitude {
             coordinate = CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
         } else {
             coordinate = nil
@@ -260,46 +325,105 @@ final class SafetyIncidentRemoteStore {
 
         return Incident(
             id: id,
-            title: string(data["title"]) ?? subtype.label,
-            summary: string(data["summary"]) ?? "Community incident report.",
+            remoteDocumentID: documentID,
+            title: dto.title.isEmpty ? subtype.label : dto.title,
+            summary: dto.summary.isEmpty ? "Community incident report." : dto.summary,
             category: category,
             subtype: subtype.category == category ? subtype : IncidentSubtype.defaultSubtype(for: category),
             severity: severity,
             status: status,
             reporterCoordinate: nil,
             coordinate: coordinate,
-            neighborhood: string(data["neighborhood"]) ?? "Nearby area",
-            reportedAt: date(data["reported_at"]) ?? Date(),
-            confirmations: int(data["confirmations"]) ?? 1,
-            disputes: int(data["disputes"]) ?? 0,
-            unsafeReports: int(data["unsafe_reports"]) ?? 0,
-            blockedReports: int(data["blocked_reports"]) ?? 0,
-            clearedReports: int(data["cleared_reports"]) ?? 0,
-            officialUpdates: int(data["official_updates"]) ?? 0,
+            neighborhood: dto.neighborhood,
+            reportedAt: dto.reportedAt,
+            confirmations: dto.confirmations,
+            disputes: dto.disputes,
+            unsafeReports: dto.unsafeReports,
+            blockedReports: dto.blockedReports,
+            clearedReports: dto.clearedReports,
+            officialUpdates: dto.officialUpdates,
             updates: []
         )
     }
 
-    private static func string(_ value: Any?) -> String? {
-        value as? String
+    /// Decodes the `query_incidents_h3` callable response body into domain incidents,
+    /// reusing the same contract DTO + mapping as the Firestore listener path. Internal
+    /// (not private) so it can be unit-tested against sample callable payloads.
+    static func decodeCallableIncidents(_ body: [String: Any]) -> [Incident] {
+        guard let items = body["incidents"] as? [[String: Any]] else { return [] }
+        return items.compactMap { item -> Incident? in
+            guard let documentID = item["incident_id"] as? String,
+                  let dto = publicIncidentDTO(from: item) else { return nil }
+            return incident(fromDTO: dto, documentID: documentID)
+        }
+        .filter { activeStatuses.contains($0.status) }
+        .sorted { $0.reportedAt > $1.reportedAt }
     }
 
-    private static func int(_ value: Any?) -> Int? {
-        if let value = value as? Int { return value }
-        if let value = value as? NSNumber { return value.intValue }
-        return nil
+    private static func publicIncidentDTO(from firestoreData: [String: Any]) -> ContractDTO.PublicIncident? {
+        var data = jsonReadyFirestoreData(firestoreData)
+        data["title"] = data["title"] ?? "Community alert"
+        data["summary"] = data["summary"] ?? "Community incident report."
+        data["category"] = data["category"] ?? ContractDTO.IncidentCategory.community.rawValue
+        data["subtype"] = data["subtype"] ?? ContractDTO.IncidentSubtype.localWarning.rawValue
+        data["severity"] = data["severity"] ?? ContractDTO.IncidentSeverity.medium.rawValue
+        data["status"] = data["status"] ?? ContractDTO.IncidentStatus.active.rawValue
+        data["neighborhood"] = data["neighborhood"] ?? "Nearby area"
+        data["confirmations"] = data["confirmations"] ?? 1
+        data["disputes"] = data["disputes"] ?? 0
+        data["unsafe_reports"] = data["unsafe_reports"] ?? 0
+        data["blocked_reports"] = data["blocked_reports"] ?? 0
+        data["cleared_reports"] = data["cleared_reports"] ?? 0
+        data["official_updates"] = data["official_updates"] ?? 0
+        data["reported_at"] = data["reported_at"] ?? ISO8601DateFormatter().string(from: Date())
+
+        do {
+            let jsonData = try JSONSerialization.data(withJSONObject: data)
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+            return try decoder.decode(ContractDTO.PublicIncident.self, from: jsonData)
+        } catch {
+            return nil
+        }
     }
 
-    private static func double(_ value: Any?) -> Double? {
-        if let value = value as? Double { return value }
-        if let value = value as? NSNumber { return value.doubleValue }
-        return nil
+    private static func jsonReadyFirestoreData(_ data: [String: Any]) -> [String: Any] {
+        data.reduce(into: [:]) { result, entry in
+            result[entry.key] = jsonReadyFirestoreValue(entry.value)
+        }
     }
 
-    private static func date(_ value: Any?) -> Date? {
-        if let value = value as? Timestamp { return value.dateValue() }
-        if let value = value as? Date { return value }
-        return nil
+    private static func jsonReadyFirestoreValue(_ value: Any) -> Any {
+        if let timestamp = value as? Timestamp {
+            return ISO8601DateFormatter().string(from: timestamp.dateValue())
+        }
+        if let date = value as? Date {
+            return ISO8601DateFormatter().string(from: date)
+        }
+        if let dictionary = value as? [String: Any] {
+            return jsonReadyFirestoreData(dictionary)
+        }
+        if let array = value as? [Any] {
+            return array.map(jsonReadyFirestoreValue)
+        }
+        return value
+    }
+
+    private static func stableIncidentID(for documentID: String) -> UUID {
+        if let uuid = UUID(uuidString: documentID) {
+            return uuid
+        }
+
+        var bytes = Array(SHA256.hash(data: Data(documentID.utf8)).prefix(16))
+        bytes[6] = (bytes[6] & 0x0F) | 0x50
+        bytes[8] = (bytes[8] & 0x3F) | 0x80
+
+        return UUID(uuid: (
+            bytes[0], bytes[1], bytes[2], bytes[3],
+            bytes[4], bytes[5], bytes[6], bytes[7],
+            bytes[8], bytes[9], bytes[10], bytes[11],
+            bytes[12], bytes[13], bytes[14], bytes[15]
+        ))
     }
 }
 

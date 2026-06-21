@@ -384,6 +384,7 @@ enum IncidentConcernReason: String, CaseIterable, Identifiable {
 
 struct Incident: Identifiable, Equatable {
     let id: UUID
+    var remoteDocumentID: String? = nil
     var title: String
     var summary: String
     var category: IncidentCategory
@@ -391,8 +392,8 @@ struct Incident: Identifiable, Equatable {
     var severity: IncidentSeverity
     var status: IncidentStatus
     var reporterCoordinate: CLLocationCoordinate2D?
-    /// Public (fuzzed) map location. `nil` when the reporter shared no location —
-    /// such incidents are not pinned on the map and show no directions.
+    /// Public map location. `nil` until the backend reveals a k-anonymous H3 cell
+    /// center, or when the incident has no location to show.
     var coordinate: CLLocationCoordinate2D?
     var neighborhood: String
     var reportedAt: Date

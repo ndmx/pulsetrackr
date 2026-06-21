@@ -12,9 +12,12 @@ final class SOSStore: ObservableObject {
     @Published private(set) var deliveryState: SOSDeliveryState = .ready
     @Published private(set) var remoteSessionID: String?
     @Published private(set) var alertedContactIDs: Set<UUID> = []
+    @Published private(set) var optedOutContactIDs: Set<UUID> = []
     @Published private(set) var lastRemoteError: String?
     @Published private(set) var lastUploadAttemptAt: Date?
     @Published private(set) var lastSuccessfulUploadAt: Date?
+    @Published private(set) var appTrustedContactList: SOSAppTrustedContactList?
+    @Published private(set) var appAlerts: [SOSAppAlert] = []
 
     private let maxTrailPoints = 80
     private let maxTrailAge: TimeInterval = 30 * 60
@@ -23,8 +26,15 @@ final class SOSStore: ObservableObject {
     private let privacyPolicy: SOSPrivacyPolicy
     private let remoteFactory: () -> SOSRemoteStore?
     private var remoteStore: SOSRemoteStore?
+    private var appAlertObservation: SOSAppAlertObservation?
+    private var isStartingAppAlertObservation = false
     private var isSyncingRemote = false
     private var nextLocationSequenceNumber = 0
+    private var queuedActivationSessionID: UUID?
+    private let outbox = OutboxQueue.shared
+    private let snapshotURL: URL
+    private let snapshotEncoder = JSONEncoder()
+    private let snapshotDecoder = JSONDecoder()
 
     init(
         contactStore: SOSTrustedContactStore = SOSTrustedContactStore(),
@@ -36,7 +46,16 @@ final class SOSStore: ObservableObject {
         self.privacyPolicy = privacyPolicy
         self.remoteStore = remoteStore
         self.remoteFactory = remoteFactory
+        let supportURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? FileManager.default.temporaryDirectory
+        let directory = supportURL.appendingPathComponent("PulseTrackr", isDirectory: true)
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        snapshotURL = directory.appendingPathComponent("sos-state.json")
+        snapshotEncoder.dateEncodingStrategy = .iso8601
+        snapshotDecoder.dateDecodingStrategy = .iso8601
+        restoreSnapshot()
         loadTrustedContacts()
+        replayQueuedEvents()
     }
 
     var isActive: Bool {
@@ -57,6 +76,10 @@ final class SOSStore: ObservableObject {
 
     var alertedContacts: [SOSTrustedContact] {
         trustedContacts.filter { alertedContactIDs.contains($0.id) }
+    }
+
+    var activeAppAlert: SOSAppAlert? {
+        appAlerts.first { $0.status == "active" }
     }
 
     var uploadStatusText: String {
@@ -97,14 +120,33 @@ final class SOSStore: ObservableObject {
             record(location: location, force: true)
         }
 
-        session = SOSSession(id: UUID(), startedAt: .now, endedAt: nil, state: .active)
+        let newSession = SOSSession(id: UUID(), startedAt: .now, endedAt: nil, state: .active)
+        session = newSession
         remoteSessionID = nil
         alertedContactIDs = []
+        optedOutContactIDs = []
         queuedEvents = []
         lastRemoteError = nil
         nextLocationSequenceNumber = 0
         deliveryState = activeTrustedContacts.isEmpty ? .localOnly : .syncing
         enqueue(.started, coordinate: location?.coordinate ?? lastKnownCoordinate, status: .waitingForRemote)
+        guard let activationLocation = lastKnownPoint?.locationSnapshot else {
+            lastRemoteError = "SOS is saved locally until your device has a current location."
+            deliveryState = .localOnly
+            persistSnapshot()
+            return
+        }
+        enqueueSOSOperation(.sosActivate(SOSActivateOutboxPayload(
+            localSessionID: newSession.id,
+            activatedAt: newSession.startedAt,
+            lastKnownLocation: activationLocation,
+            recentTrail: trail.compactMap(\.locationSnapshot),
+            directionOfTravel: latestDirectionOfTravel,
+            trustedContacts: activeTrustedContacts.compactMap(\.notificationTarget),
+            privacyPolicy: privacyPolicy
+        )))
+        queuedActivationSessionID = newSession.id
+        persistSnapshot()
         syncRemote(force: true)
     }
 
@@ -112,11 +154,20 @@ final class SOSStore: ObservableObject {
         guard var activeSession = session, activeSession.isActive else { return }
         activeSession.state = .stopping
         session = activeSession
-        enqueue(.stopped, coordinate: lastKnownCoordinate, status: .waitingForRemote)
+        let event = enqueue(.stopped, coordinate: lastKnownCoordinate, status: .waitingForRemote)
 
         activeSession.state = .stopped
         activeSession.endedAt = .now
         session = activeSession
+        enqueueSOSOperation(.sosResolve(SOSResolveOutboxPayload(
+            localEventID: event.id,
+            localSessionID: activeSession.id,
+            remoteSessionID: remoteSessionID,
+            reason: .userResolved,
+            finalLocation: lastKnownPoint?.locationSnapshot,
+            resolvedAt: activeSession.endedAt ?? .now
+        )))
+        persistSnapshot()
         syncRemote(force: true)
     }
 
@@ -125,7 +176,16 @@ final class SOSStore: ObservableObject {
         activeSession.state = .cancelled
         activeSession.endedAt = .now
         session = activeSession
-        enqueue(.cancelled, coordinate: lastKnownCoordinate, status: .waitingForRemote)
+        let event = enqueue(.cancelled, coordinate: lastKnownCoordinate, status: .waitingForRemote)
+        enqueueSOSOperation(.sosResolve(SOSResolveOutboxPayload(
+            localEventID: event.id,
+            localSessionID: activeSession.id,
+            remoteSessionID: remoteSessionID,
+            reason: .falseAlarm,
+            finalLocation: lastKnownPoint?.locationSnapshot,
+            resolvedAt: activeSession.endedAt ?? .now
+        )))
+        persistSnapshot()
         syncRemote(force: true)
     }
 
@@ -142,11 +202,23 @@ final class SOSStore: ObservableObject {
         trimTrail(now: point.timestamp)
 
         if isActive {
-            enqueue(.locationUpdated, coordinate: point.coordinate, status: .queued)
+            enqueueActivationIfNeeded()
+            let event = enqueue(.locationUpdated, coordinate: point.coordinate, status: .queued)
+            if let activeSession = session, let snapshot = point.locationSnapshot {
+                enqueueSOSOperation(.sosLocationUpdate(SOSLocationUpdateOutboxPayload(
+                    localEventID: event.id,
+                    localSessionID: activeSession.id,
+                    remoteSessionID: remoteSessionID,
+                    location: snapshot,
+                    sequenceNumber: event.sequenceNumber ?? 0,
+                    directionOfTravel: latestDirectionOfTravel
+                )))
+            }
             if shouldAttemptLiveUpload(now: point.timestamp) {
                 syncRemote(force: false)
             }
         }
+        persistSnapshot()
     }
 
     func markQueuedEventsFailed() {
@@ -156,6 +228,7 @@ final class SOSStore: ObservableObject {
             updated.attemptCount += 1
             return updated
         }
+        persistSnapshot()
     }
 
     func retryQueuedEvents() {
@@ -196,6 +269,54 @@ final class SOSStore: ObservableObject {
         saveTrustedContact(updated)
     }
 
+    func createAppTrustedContactInvite(ownerDisplayName: String) async throws -> SOSAppTrustedContactInvite {
+        guard let remote = configuredRemoteStore() else {
+            throw SOSStoreError.remoteUnavailable
+        }
+        return try await remote.createAppTrustedContactInvite(ownerDisplayName: ownerDisplayName)
+    }
+
+    func acceptAppTrustedContactInvite(
+        inviteCode: String,
+        trustedContactDisplayName: String
+    ) async throws -> SOSAppTrustedContactRelationship {
+        guard let remote = configuredRemoteStore() else {
+            throw SOSStoreError.remoteUnavailable
+        }
+        let relationship = try await remote.acceptAppTrustedContactInvite(
+            inviteCode: inviteCode,
+            trustedContactDisplayName: trustedContactDisplayName
+        )
+        try? await refreshAppTrustedContacts()
+        return relationship
+    }
+
+    func refreshAppTrustedContacts() async throws {
+        guard let remote = configuredRemoteStore() else {
+            throw SOSStoreError.remoteUnavailable
+        }
+        appTrustedContactList = try await remote.listAppTrustedContacts()
+    }
+
+    func startObservingAppAlerts() {
+        guard appAlertObservation == nil, !isStartingAppAlertObservation else { return }
+        isStartingAppAlertObservation = true
+
+        Task {
+            defer { isStartingAppAlertObservation = false }
+            guard let remote = configuredRemoteStore() else { return }
+            do {
+                appAlertObservation = try await remote.observeAppSOSAlerts { [weak self] alerts in
+                    Task { @MainActor in
+                        self?.appAlerts = alerts
+                    }
+                }
+            } catch {
+                lastRemoteError = "Incoming app SOS alerts could not be started."
+            }
+        }
+    }
+
     private func shouldAppend(_ point: SOSTrailPoint) -> Bool {
         guard let previous = trail.last else { return true }
 
@@ -234,8 +355,6 @@ final class SOSStore: ObservableObject {
     }
 
     private func syncRemoteNow(force: Bool) async {
-        guard let activeSession = session else { return }
-
         let unsentEvents = queuedEvents.filter { event in
             event.status == .waitingForRemote || event.status == .queued || (force && event.status == .failed)
         }
@@ -254,24 +373,21 @@ final class SOSStore: ObservableObject {
         markEvents(unsentEvents.map(\.id), status: .waitingForRemote)
 
         do {
-            if remoteSessionID == nil {
-                try await activateRemoteSession(remote: remote, session: activeSession)
-            }
-
-            if let remoteSessionID {
-                try await uploadLocationEvents(remote: remote, sessionID: remoteSessionID, force: force)
-                try await resolveRemoteIfNeeded(remote: remote, sessionID: remoteSessionID)
-            }
-
+            try await drainSOSOutbox(remote: remote, force: force)
             lastSuccessfulUploadAt = .now
             deliveryState = .delivered
         } catch {
-            lastRemoteError = "Emergency updates could not upload. Keep moving if safe; PulseTrackr will retry."
+            if case SOSStoreError.noTrustedContactDelivery = error {
+                lastRemoteError = smsOptOutNotice ?? "SOS saved, but no trusted contact was reached. Check SMS/email provider setup and try again."
+            } else {
+                lastRemoteError = "Emergency updates could not upload. Keep moving if safe; PulseTrackr will retry."
+            }
             markEvents(unsentEvents.map(\.id), status: .failed, incrementAttempt: true)
             deliveryState = .failed
         }
 
         isSyncingRemote = false
+        persistSnapshot()
     }
 
     private func configuredRemoteStore() -> SOSRemoteStore? {
@@ -300,6 +416,13 @@ final class SOSStore: ObservableObject {
         let response = try await remote.activateSOS(payload: payload)
         remoteSessionID = response.sessionID
         alertedContactIDs = Set(response.trustedContactsNotified)
+        optedOutContactIDs = Set(response.trustedContactsOptedOut)
+        if let smsOptOutNotice {
+            lastRemoteError = smsOptOutNotice
+        }
+        if !activeTrustedContacts.isEmpty && response.notificationSummary.sent == 0 && response.notificationSummary.queued == 0 {
+            throw SOSStoreError.noTrustedContactDelivery
+        }
         if !response.trustedContactsNotified.isEmpty {
             // Contacts were alerted remotely; failing to persist that locally must not
             // fail the SOS activation, but it shouldn't vanish silently either.
@@ -311,6 +434,21 @@ final class SOSStore: ObservableObject {
             loadTrustedContacts()
         }
         markEvents(ofKind: .started, status: .delivered)
+    }
+
+    private var smsOptOutNotice: String? {
+        let optedOutNames = activeTrustedContacts
+            .filter { optedOutContactIDs.contains($0.id) }
+            .map(\.displayName)
+        guard !optedOutNames.isEmpty else { return nil }
+
+        if optedOutNames.count == 1, let name = optedOutNames.first {
+            return "\(name) opted out of receiving your SOS SMS alerts. They can reply START to receive texts again."
+        }
+
+        let names = optedOutNames.prefix(3).joined(separator: ", ")
+        let suffix = optedOutNames.count > 3 ? " and \(optedOutNames.count - 3) more" : ""
+        return "\(names)\(suffix) opted out of receiving your SOS SMS alerts. They can reply START to receive texts again."
     }
 
     private func uploadLocationEvents(remote: SOSRemoteStore, sessionID: String, force: Bool) async throws {
@@ -345,7 +483,6 @@ final class SOSStore: ObservableObject {
 
     private func shouldAttemptLiveUpload(now: Date) -> Bool {
         guard isActive else { return false }
-        guard activeTrustedContacts.isEmpty == false else { return false }
         guard lastUploadAttemptAt.map({ now.timeIntervalSince($0) }) ?? .infinity >= privacyPolicy.liveLocationUpdateIntervalSeconds else {
             return false
         }
@@ -365,34 +502,38 @@ final class SOSStore: ObservableObject {
                 queuedEvents[index].attemptCount += 1
             }
         }
+        persistSnapshot()
     }
 
     private func markEvents(ofKind kind: SOSQueueEventKind, status: SOSQueueStatus) {
         for index in queuedEvents.indices where queuedEvents[index].kind == kind {
             queuedEvents[index].status = status
         }
+        persistSnapshot()
     }
 
+    @discardableResult
     private func enqueue(
         _ kind: SOSQueueEventKind,
         coordinate: CLLocationCoordinate2D?,
         status: SOSQueueStatus
-    ) {
-        queuedEvents.append(
-            SOSQueueEvent(
-                id: UUID(),
-                kind: kind,
-                timestamp: .now,
-                coordinate: coordinate,
-                sequenceNumber: nextSequenceNumber(for: kind),
-                status: status,
-                attemptCount: 0
-            )
+    ) -> SOSQueueEvent {
+        let event = SOSQueueEvent(
+            id: UUID(),
+            kind: kind,
+            timestamp: .now,
+            coordinate: coordinate,
+            sequenceNumber: nextSequenceNumber(for: kind),
+            status: status,
+            attemptCount: 0
         )
+        queuedEvents.append(event)
 
         if queuedEvents.count > maxTrailPoints {
             queuedEvents.removeFirst(queuedEvents.count - maxTrailPoints)
         }
+        persistSnapshot()
+        return event
     }
 
     private func nextSequenceNumber(for kind: SOSQueueEventKind) -> Int? {
@@ -400,10 +541,267 @@ final class SOSStore: ObservableObject {
         defer { nextLocationSequenceNumber += 1 }
         return nextLocationSequenceNumber
     }
+
+    private func enqueueSOSOperation(_ payload: OutboxPayload) {
+        let kind: OutboxOperationKind
+        switch payload {
+        case .sosActivate:
+            kind = .sosActivate
+        case .sosLocationUpdate:
+            kind = .sosLocationUpdate
+        case .sosResolve:
+            kind = .sosResolve
+        default:
+            return
+        }
+
+        Task { [weak self] in
+            guard let self else { return }
+            await outbox.enqueue(OutboxOperation(kind: kind, payload: payload))
+            await MainActor.run {
+                self.syncRemote(force: true)
+            }
+        }
+    }
+
+    private func enqueueActivationIfNeeded() {
+        guard remoteSessionID == nil, let activeSession = session, let activationLocation = lastKnownPoint?.locationSnapshot else { return }
+        guard queuedActivationSessionID != activeSession.id else { return }
+        enqueueSOSOperation(.sosActivate(SOSActivateOutboxPayload(
+            localSessionID: activeSession.id,
+            activatedAt: activeSession.startedAt,
+            lastKnownLocation: activationLocation,
+            recentTrail: trail.compactMap(\.locationSnapshot),
+            directionOfTravel: latestDirectionOfTravel,
+            trustedContacts: activeTrustedContacts.compactMap(\.notificationTarget),
+            privacyPolicy: privacyPolicy
+        )))
+        queuedActivationSessionID = activeSession.id
+    }
+
+    private func replayQueuedEvents() {
+        guard !queuedEvents.isEmpty || session != nil else { return }
+        syncRemote(force: true)
+    }
+
+    private func drainSOSOutbox(remote: SOSRemoteStore, force: Bool) async throws {
+        let operations = await outbox.dueOperations(
+            for: [.sosActivate, .sosLocationUpdate, .sosResolve],
+            now: force ? .distantFuture : .now
+        )
+
+        for operation in operations {
+            await outbox.markProcessing(operation.id)
+            do {
+                try await processSOSOutboxOperation(operation, remote: remote)
+                await outbox.remove(operation.id)
+            } catch {
+                await outbox.retryLater(operation.id, error: error, baseDelaySeconds: 10)
+                throw error
+            }
+        }
+    }
+
+    private func processSOSOutboxOperation(_ operation: OutboxOperation, remote: SOSRemoteStore) async throws {
+        switch operation.payload {
+        case .sosActivate(let payload):
+            guard remoteSessionID == nil else {
+                markEvents(ofKind: .started, status: .delivered)
+                return
+            }
+            let response = try await remote.activateSOS(payload: SOSActivationPayload(
+                clientSessionID: payload.localSessionID,
+                activatedAt: payload.activatedAt,
+                lastKnownLocation: payload.lastKnownLocation,
+                recentTrail: payload.recentTrail,
+                directionOfTravel: payload.directionOfTravel,
+                trustedContactsToNotify: payload.trustedContacts,
+                privacyPolicy: payload.privacyPolicy
+            ))
+            remoteSessionID = response.sessionID
+            alertedContactIDs = Set(response.trustedContactsNotified)
+            optedOutContactIDs = Set(response.trustedContactsOptedOut)
+            if let smsOptOutNotice {
+                lastRemoteError = smsOptOutNotice
+            }
+            if !activeTrustedContacts.isEmpty && response.notificationSummary.sent == 0 && response.notificationSummary.queued == 0 {
+                throw SOSStoreError.noTrustedContactDelivery
+            }
+            if !response.trustedContactsNotified.isEmpty {
+                do {
+                    try contactStore.markNotified(contactIDs: response.trustedContactsNotified)
+                } catch {
+                    trustedContactError = "Your contacts were alerted, but we couldn't update their status on this device."
+                }
+                loadTrustedContacts()
+            }
+            markEvents(ofKind: .started, status: .delivered)
+
+        case .sosLocationUpdate(let payload):
+            guard let sessionID = remoteSessionID ?? payload.remoteSessionID else {
+                throw SOSStoreError.missingRemoteSession
+            }
+            try await remote.appendSOSLocation(
+                sessionID: sessionID,
+                update: SOSLocationUpdatePayload(
+                    location: payload.location,
+                    sequenceNumber: payload.sequenceNumber,
+                    directionOfTravel: payload.directionOfTravel
+                )
+            )
+            markEvents([payload.localEventID], status: .delivered)
+
+        case .sosResolve(let payload):
+            guard let sessionID = remoteSessionID ?? payload.remoteSessionID else {
+                throw SOSStoreError.missingRemoteSession
+            }
+            try await remote.resolveSOS(
+                sessionID: sessionID,
+                resolution: payload.reason,
+                finalLocation: payload.finalLocation,
+                resolvedAt: payload.resolvedAt
+            )
+            markEvents([payload.localEventID], status: .delivered)
+
+        default:
+            break
+        }
+    }
+
+    private func restoreSnapshot() {
+        guard
+            let data = try? Data(contentsOf: snapshotURL),
+            let snapshot = try? snapshotDecoder.decode(SOSStoreSnapshot.self, from: data)
+        else {
+            return
+        }
+
+        session = snapshot.session?.session
+        trail = snapshot.trail.map(\.point)
+        queuedEvents = snapshot.queuedEvents.map(\.event)
+        lastKnownPoint = snapshot.lastKnownPoint?.point
+        remoteSessionID = snapshot.remoteSessionID
+        alertedContactIDs = Set(snapshot.alertedContactIDs)
+        optedOutContactIDs = Set(snapshot.optedOutContactIDs)
+        nextLocationSequenceNumber = snapshot.nextLocationSequenceNumber
+        deliveryState = queuedEvents.contains { $0.status != .delivered } ? .failed : deliveryState
+    }
+
+    private func persistSnapshot() {
+        let snapshot = SOSStoreSnapshot(
+            session: session.map(StoredSOSSession.init),
+            trail: trail.map(StoredSOSTrailPoint.init),
+            queuedEvents: queuedEvents.map(StoredSOSQueueEvent.init),
+            lastKnownPoint: lastKnownPoint.map(StoredSOSTrailPoint.init),
+            remoteSessionID: remoteSessionID,
+            alertedContactIDs: Array(alertedContactIDs),
+            optedOutContactIDs: Array(optedOutContactIDs),
+            nextLocationSequenceNumber: nextLocationSequenceNumber
+        )
+        do {
+            let data = try snapshotEncoder.encode(snapshot)
+            try data.write(to: snapshotURL, options: [.atomic])
+        } catch {
+            assertionFailure("Unable to persist SOS queue: \(error)")
+        }
+    }
 }
 
 enum SOSStoreError: Error {
     case missingLocation
+    case missingRemoteSession
+    case noTrustedContactDelivery
+    case remoteUnavailable
+}
+
+private struct SOSStoreSnapshot: Codable {
+    var session: StoredSOSSession?
+    var trail: [StoredSOSTrailPoint]
+    var queuedEvents: [StoredSOSQueueEvent]
+    var lastKnownPoint: StoredSOSTrailPoint?
+    var remoteSessionID: String?
+    var alertedContactIDs: [UUID]
+    var optedOutContactIDs: [UUID]
+    var nextLocationSequenceNumber: Int
+}
+
+private struct StoredSOSSession: Codable {
+    var id: UUID
+    var startedAt: Date
+    var endedAt: Date?
+    var state: SOSSessionState
+
+    init(_ session: SOSSession) {
+        self.id = session.id
+        self.startedAt = session.startedAt
+        self.endedAt = session.endedAt
+        self.state = session.state
+    }
+
+    var session: SOSSession {
+        SOSSession(id: id, startedAt: startedAt, endedAt: endedAt, state: state)
+    }
+}
+
+private struct StoredSOSTrailPoint: Codable {
+    var id: UUID
+    var coordinate: CodableCoordinate
+    var timestamp: Date
+    var speed: CLLocationSpeed?
+    var course: CLLocationDirection?
+    var horizontalAccuracy: CLLocationAccuracy?
+
+    init(_ point: SOSTrailPoint) {
+        self.id = point.id
+        self.coordinate = CodableCoordinate(point.coordinate)
+        self.timestamp = point.timestamp
+        self.speed = point.speed
+        self.course = point.course
+        self.horizontalAccuracy = point.horizontalAccuracy
+    }
+
+    var point: SOSTrailPoint {
+        SOSTrailPoint(
+            id: id,
+            coordinate: coordinate.clLocationCoordinate,
+            timestamp: timestamp,
+            speed: speed,
+            course: course,
+            horizontalAccuracy: horizontalAccuracy
+        )
+    }
+}
+
+private struct StoredSOSQueueEvent: Codable {
+    var id: UUID
+    var kind: SOSQueueEventKind
+    var timestamp: Date
+    var coordinate: CodableCoordinate?
+    var sequenceNumber: Int?
+    var status: SOSQueueStatus
+    var attemptCount: Int
+
+    init(_ event: SOSQueueEvent) {
+        self.id = event.id
+        self.kind = event.kind
+        self.timestamp = event.timestamp
+        self.coordinate = event.coordinate.map(CodableCoordinate.init)
+        self.sequenceNumber = event.sequenceNumber
+        self.status = event.status
+        self.attemptCount = event.attemptCount
+    }
+
+    var event: SOSQueueEvent {
+        SOSQueueEvent(
+            id: id,
+            kind: kind,
+            timestamp: timestamp,
+            coordinate: coordinate?.clLocationCoordinate,
+            sequenceNumber: sequenceNumber,
+            status: status,
+            attemptCount: attemptCount
+        )
+    }
 }
 
 private extension SOSTrailPoint {

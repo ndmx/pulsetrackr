@@ -7,7 +7,6 @@ struct SettingsView: View {
     @AppStorage(AppStorageKey.watchRadius) private var watchRadius = 3.0
     @AppStorage(AppStorageKey.urgentAlerts) private var urgentAlerts = true
     @AppStorage(AppStorageKey.communityAlerts) private var communityAlerts = true
-    @AppStorage(AppStorageKey.useApproximateLocation) private var useApproximateLocation = true
     @AppStorage(AppStorageKey.lightModeEnabled) private var lightModeEnabled = false
 
     // watchRadius is stored canonically in km; display it in the user's locale unit.
@@ -119,13 +118,12 @@ struct SettingsView: View {
         VStack(alignment: .leading, spacing: DS.Space.md) {
             SettingsSectionHeader(title: "Privacy")
 
-            SettingsToggleRow(
-                icon: "location.slash.fill",
-                color: DS.Color.textSecondary,
-                label: "Hide exact report location",
-                description: "Public incident pins are fuzzed to a nearby area",
-                isOn: $useApproximateLocation
-            )
+            StatusRow(icon: "location.slash.fill", label: "Exact report locations protected", color: DS.Color.positive)
+
+            Text("Public incident pins appear only as k-anonymous H3 areas after enough nearby reports.")
+                .font(DS.Font.caption())
+                .foregroundStyle(DS.Color.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
 
             Divider()
                 .overlay(DS.Color.hairline)

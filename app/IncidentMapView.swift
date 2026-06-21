@@ -100,7 +100,7 @@ struct IncidentMapView: View {
         .navigationTitle("Live Map")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
-            locationManager.requestCurrentLocation()
+            locationManager.refreshCurrentLocationIfAuthorized()
         }
         .onReceive(locationManager.$currentCoordinate) { coordinate in
             guard let coordinate, !hasCenteredOnUser else { return }

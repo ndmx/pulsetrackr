@@ -7,6 +7,7 @@ struct FeedMapboxLayer: View {
     var incidents: [Incident]
     var userCoordinate: CLLocationCoordinate2D?
 
+    @Environment(\.colorScheme) private var colorScheme
     @State private var hasCenteredOnUser = false
 
     // Only incidents with a known location can be pinned. Carrying the unwrapped
@@ -51,12 +52,12 @@ struct FeedMapboxLayer: View {
                         .allowZElevate(true)
                     }
                 }
-                .mapStyle(.standard(lightPreset: .night))
+                .mapStyle(.standard(lightPreset: colorScheme == .dark ? .night : .day))
                 .ornamentOptions(ornaments)
                 .frame(width: proxy.size.width, height: proxy.size.height)
                 .ignoresSafeArea()
             } else {
-                Color.black
+                DS.Color.background
             }
         }
         .onChange(of: userCoordinate?.latitude) { _, _ in centerOnUserOnce() }
@@ -96,14 +97,14 @@ private struct FeedMapboxPin: View {
                 )
 
             Circle()
-                .fill(.black.opacity(0.88))
+                .fill(DS.Color.surface.opacity(0.94))
                 .frame(width: 44, height: 44)
                 .overlay(Circle().stroke(incident.severity.tint, lineWidth: 3))
                 .shadow(color: incident.severity.tint.opacity(0.70), radius: 15)
 
             Image(systemName: incident.subtype.icon)
                 .font(.system(size: 19, weight: .heavy))
-                .foregroundStyle(.white)
+                .foregroundStyle(DS.Color.textPrimary)
 
             Image(systemName: incident.confidence.icon)
                 .font(.system(size: 9, weight: .black))

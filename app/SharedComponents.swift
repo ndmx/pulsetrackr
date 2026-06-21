@@ -85,7 +85,7 @@ struct LocationPromptCard: View {
         case .denied, .restricted:
             "Location access is off, so the map can't show what's happening around you. Turn it on in Settings."
         default:
-            "Turn on location to see live incidents and alerts in your area."
+            "PulseTrackr uses your location to center the map and show nearby incidents in your watch area."
         }
     }
 

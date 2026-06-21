@@ -14,7 +14,6 @@ struct ReportIncidentView: View {
     @State private var category: IncidentCategory = .security
     @State private var subtype: IncidentSubtype = .suspiciousActivity
     @State private var severity: IncidentSeverity = .medium
-    @AppStorage(AppStorageKey.useApproximateLocation) private var useApproximateLocation = true
     @State private var hasVoiceNote = false
     @State private var hasMediaEvidence = false
     // Ongoing → Active (top priority); already-happened → Watching.
@@ -93,7 +92,12 @@ struct ReportIncidentView: View {
 
                 manualControls
 
-                PrivacyPanel(locationStatus: locationStatus)
+                PrivacyPanel(
+                    locationStatus: locationStatus,
+                    authorizationStatus: locationManager.authorizationStatus,
+                    hasReportLocation: hasReportLocation,
+                    onRequestLocation: { locationManager.requestCurrentLocation() }
+                )
 
                 Button {
                     submit()
@@ -114,7 +118,7 @@ struct ReportIncidentView: View {
         .navigationTitle("Report")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
-            locationManager.requestCurrentLocation()
+            locationManager.refreshCurrentLocationIfAuthorized()
         }
         .onChange(of: category) { _, newCategory in
             subtype = IncidentSubtype.defaultSubtype(for: newCategory)
@@ -238,7 +242,7 @@ struct ReportIncidentView: View {
             severity: finalSeverity,
             neighborhood: neighborhood.trimmingCharacters(in: .whitespacesAndNewlines),
             reporterCoordinate: reportCoordinate,
-            useApproximateLocation: useApproximateLocation,
+            useApproximateLocation: true,
             status: isOngoing ? .active : .watching,
             evidenceUpdates: evidenceNotes,
             evidenceAttachments: evidenceAttachments
@@ -514,8 +518,8 @@ private struct ReportComposer: View {
             .buttonStyle(.plain)
         }
         .confirmationDialog("Add a photo", isPresented: $showPhotoSourceDialog, titleVisibility: .visible) {
-            Button("Take Photo") { showCamera = true }
-            Button("Choose from Library") { showLibraryPicker = true }
+            Button("Take Photo") { presentAfterDismissal { showCamera = true } }
+            Button("Choose from Library") { presentAfterDismissal { showLibraryPicker = true } }
             Button("Cancel", role: .cancel) { }
         }
         .photosPicker(isPresented: $showLibraryPicker, selection: $selectedPhotoItem, matching: .images)
@@ -530,6 +534,13 @@ private struct ReportComposer: View {
                 }
             }
             .ignoresSafeArea()
+        }
+    }
+
+    private func presentAfterDismissal(_ action: @escaping @MainActor () -> Void) {
+        Task { @MainActor in
+            await Task.yield()
+            action()
         }
     }
 
@@ -789,6 +800,10 @@ private struct SuggestionPanel: View {
 
 private struct PrivacyPanel: View {
     var locationStatus: String
+    var authorizationStatus: CLAuthorizationStatus
+    var hasReportLocation: Bool
+    var onRequestLocation: () -> Void
+    @Environment(\.openURL) private var openURL
 
     var body: some View {
         VStack(alignment: .leading, spacing: DS.Space.sm) {
@@ -798,8 +813,45 @@ private struct PrivacyPanel: View {
             Text("Exact reporter location stays private to the app. The public map shows an approximate incident area.")
                 .font(DS.Font.caption())
                 .foregroundStyle(DS.Color.textSecondary)
+
+            if !hasReportLocation {
+                Button(action: primaryAction) {
+                    Label(buttonTitle, systemImage: buttonIcon)
+                }
+                .buttonStyle(DSSecondaryButtonStyle())
+                .padding(.top, DS.Space.xs)
+            }
         }
         .pulsePanel()
+    }
+
+    private var buttonTitle: String {
+        switch authorizationStatus {
+        case .denied, .restricted:
+            "Open Location Settings"
+        default:
+            "Use my location for this report"
+        }
+    }
+
+    private var buttonIcon: String {
+        switch authorizationStatus {
+        case .denied, .restricted:
+            "gearshape.fill"
+        default:
+            "location.fill"
+        }
+    }
+
+    private func primaryAction() {
+        switch authorizationStatus {
+        case .denied, .restricted:
+            if let url = URL(string: UIApplication.openSettingsURLString) {
+                openURL(url)
+            }
+        default:
+            onRequestLocation()
+        }
     }
 }
 

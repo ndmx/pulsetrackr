@@ -1,6 +1,7 @@
 import CoreLocation
 import FirebaseAuth
 import FirebaseCore
+import FirebaseFirestore
 import FirebaseFunctions
 import Foundation
 #if canImport(Network)
@@ -11,6 +12,7 @@ import UIKit
 #endif
 
 final class SOSRemoteStore {
+    private let db: Firestore
     private let functions: Functions
 
     static func makeIfConfigured() -> SOSRemoteStore? {
@@ -18,7 +20,8 @@ final class SOSRemoteStore {
         return SOSRemoteStore()
     }
 
-    private init(functions: Functions = Functions.functions()) {
+    private init(db: Firestore = Firestore.firestore(), functions: Functions = Functions.functions()) {
+        self.db = db
         self.functions = functions
     }
 
@@ -49,6 +52,51 @@ final class SOSRemoteStore {
             resolvedAt: resolvedAt
         )
         _ = try await callFunction(named: "resolve_sos", data: payload.functionPayload)
+    }
+
+    func createAppTrustedContactInvite(ownerDisplayName: String) async throws -> SOSAppTrustedContactInvite {
+        try await ensureSignedIn()
+        let result = try await callFunction(
+            named: "create_app_trusted_contact_invite",
+            data: ["owner_display_name": ownerDisplayName]
+        )
+        return try SOSAppTrustedContactInvite(resultData: result.data)
+    }
+
+    func acceptAppTrustedContactInvite(
+        inviteCode: String,
+        trustedContactDisplayName: String
+    ) async throws -> SOSAppTrustedContactRelationship {
+        try await ensureSignedIn()
+        let result = try await callFunction(named: "accept_app_trusted_contact_invite", data: [
+            "invite_code": inviteCode,
+            "trusted_contact_display_name": trustedContactDisplayName
+        ])
+        return try SOSAppTrustedContactRelationship(resultData: result.data)
+    }
+
+    func listAppTrustedContacts() async throws -> SOSAppTrustedContactList {
+        try await ensureSignedIn()
+        let result = try await callFunction(named: "list_app_trusted_contacts", data: [:])
+        return SOSAppTrustedContactList(resultData: result.data)
+    }
+
+    func observeAppSOSAlerts(onChange: @escaping ([SOSAppAlert]) -> Void) async throws -> SOSAppAlertObservation {
+        try await ensureSignedIn()
+        guard let uid = Auth.auth().currentUser?.uid else {
+            throw SOSRemoteStoreError.invalidResponse
+        }
+
+        let registration = db.collection("sos_app_alerts_private")
+            .whereField("recipientUid", isEqualTo: uid)
+            .addSnapshotListener { snapshot, error in
+                guard error == nil, let snapshot else { return }
+                let alerts = snapshot.documents
+                    .compactMap(SOSAppAlert.init(document:))
+                    .sorted { $0.updatedAt > $1.updatedAt }
+                onChange(alerts)
+            }
+        return SOSAppAlertObservation(registration: registration)
     }
 
     private func ensureSignedIn() async throws {
@@ -95,16 +143,17 @@ struct SOSActivationPayload: Equatable {
     }
 
     var functionPayload: [String: Any] {
-        [
-            "client_session_id": clientSessionID.uuidString,
-            "activated_at": SOSPayloadCoding.string(from: activatedAt),
-            "source": source,
-            "last_known_location": lastKnownLocation.functionPayload,
-            "recent_trail": privacyScopedTrail.map(\.functionPayload),
-            "direction_of_travel": resolvedDirectionOfTravel?.functionPayload as Any,
-            "trusted_contacts_to_notify": trustedContactsToNotify.map(\.functionPayload),
-            "device": deviceMetadata.functionPayload,
-            "privacy": privacyPolicy.functionPayload
+        let dto = contractPayload
+        return [
+            "client_session_id": dto.clientSessionID,
+            "activated_at": SOSPayloadCoding.string(from: dto.activatedAt),
+            "source": dto.source,
+            "last_known_location": dto.lastKnownLocation.functionPayload,
+            "recent_trail": dto.recentTrail.map(\.functionPayload),
+            "direction_of_travel": dto.directionOfTravel?.functionPayload as Any,
+            "trusted_contacts_to_notify": dto.trustedContacts.map(\.functionPayload),
+            "device": dto.device.functionPayload,
+            "privacy": dto.privacy.functionPayload
         ].compactingNilValuesForSOS
     }
 
@@ -138,6 +187,20 @@ struct SOSActivationPayload: Equatable {
     private var resolvedDirectionOfTravel: SOSDirectionOfTravel? {
         directionOfTravel ?? SOSDirectionOfTravel(recentTrail: privacyScopedTrail + [lastKnownLocation])
     }
+
+    private var contractPayload: ContractDTO.ActivationPayload {
+        ContractDTO.ActivationPayload(
+            activatedAt: activatedAt,
+            clientSessionID: clientSessionID.uuidString,
+            device: deviceMetadata.contractDTO,
+            directionOfTravel: resolvedDirectionOfTravel?.contractDTO,
+            lastKnownLocation: lastKnownLocation.contractDTO,
+            privacy: privacyPolicy.contractDTO,
+            recentTrail: privacyScopedTrail.map(\.contractDTO),
+            source: source,
+            trustedContacts: trustedContactsToNotify.map(\.contractDTO)
+        )
+    }
 }
 
 struct SOSLocationUpdatePayload: Equatable {
@@ -159,13 +222,25 @@ struct SOSLocationUpdatePayload: Equatable {
     }
 
     var functionPayload: [String: Any] {
-        [
-            "location": location.functionPayload,
-            "sequence_number": sequenceNumber,
-            "captured_at": SOSPayloadCoding.string(from: location.capturedAt),
-            "direction_of_travel": directionOfTravel?.functionPayload as Any,
-            "device": deviceMetadata.functionPayload
+        let dto = contractPayload(sessionID: "")
+        return [
+            "location": dto.location.functionPayload,
+            "sequence_number": dto.sequenceNumber,
+            "captured_at": SOSPayloadCoding.string(from: dto.capturedAt),
+            "direction_of_travel": dto.directionOfTravel?.functionPayload as Any,
+            "device": dto.device.functionPayload
         ].compactingNilValuesForSOS
+    }
+
+    func contractPayload(sessionID: String) -> ContractDTO.LocationUpdatePayload {
+        ContractDTO.LocationUpdatePayload(
+            capturedAt: location.capturedAt,
+            device: deviceMetadata.contractDTO,
+            directionOfTravel: directionOfTravel?.contractDTO,
+            location: location.contractDTO,
+            sequenceNumber: sequenceNumber,
+            sessionID: sessionID
+        )
     }
 }
 
@@ -176,12 +251,22 @@ struct SOSResolutionPayload: Equatable {
     var resolvedAt: Date
 
     var functionPayload: [String: Any] {
-        [
-            "session_id": sessionID,
-            "resolution_reason": reason.rawValue,
-            "resolved_at": SOSPayloadCoding.string(from: resolvedAt),
-            "final_location": finalLocation?.functionPayload as Any
+        let dto = contractPayload
+        return [
+            "session_id": dto.sessionID,
+            "resolution_reason": dto.reason.rawValue,
+            "resolved_at": SOSPayloadCoding.string(from: dto.resolvedAt),
+            "final_location": dto.finalLocation?.functionPayload as Any
         ].compactingNilValuesForSOS
+    }
+
+    private var contractPayload: ContractDTO.ResolutionPayload {
+        ContractDTO.ResolutionPayload(
+            finalLocation: finalLocation?.contractDTO,
+            reason: reason.contractDTO,
+            resolvedAt: resolvedAt,
+            sessionID: sessionID
+        )
     }
 }
 
@@ -195,6 +280,9 @@ enum SOSResolutionReason: String, Codable, CaseIterable, Equatable {
 struct SOSActivationResponse {
     var sessionID: String
     var trustedContactsNotified: [UUID]
+    var trustedContactsOptedOut: [UUID]
+    var appTrustedContactsNotified: [String]
+    var notificationSummary: SOSNotificationSummary
     var expiresAt: Date?
 
     init(resultData: Any) throws {
@@ -208,7 +296,331 @@ struct SOSActivationResponse {
         self.sessionID = sessionID
         self.trustedContactsNotified = (body["trusted_contacts_notified"] as? [String] ?? [])
             .compactMap(UUID.init(uuidString:))
+        self.trustedContactsOptedOut = (body["trusted_contacts_opted_out"] as? [String] ?? [])
+            .compactMap(UUID.init(uuidString:))
+        self.appTrustedContactsNotified = body["app_trusted_contacts_notified"] as? [String] ?? []
+        self.notificationSummary = SOSNotificationSummary(resultData: body["notification_summary"])
         self.expiresAt = SOSPayloadCoding.date(from: body["expires_at"])
+    }
+}
+
+struct SOSAppTrustedContactInvite: Equatable {
+    var inviteID: String
+    var inviteCode: String
+    var expiresAt: Date?
+
+    init(resultData: Any) throws {
+        guard
+            let body = resultData as? [String: Any],
+            let inviteID = body["invite_id"] as? String,
+            let inviteCode = body["invite_code"] as? String
+        else {
+            throw SOSRemoteStoreError.invalidResponse
+        }
+
+        self.inviteID = inviteID
+        self.inviteCode = inviteCode
+        self.expiresAt = SOSPayloadCoding.date(from: body["expires_at"])
+    }
+}
+
+struct SOSAppTrustedContactRelationship: Identifiable, Equatable {
+    var id: String
+    var ownerUID: String
+    var trustedContactUID: String?
+    var ownerDisplayName: String
+    var trustedContactDisplayName: String
+    var status: String
+
+    init(resultData: Any) throws {
+        guard
+            let body = resultData as? [String: Any],
+            let relationshipID = body["relationship_id"] as? String,
+            let ownerUID = body["owner_uid"] as? String
+        else {
+            throw SOSRemoteStoreError.invalidResponse
+        }
+
+        self.id = relationshipID
+        self.ownerUID = ownerUID
+        self.trustedContactUID = body["trusted_contact_uid"] as? String
+        self.ownerDisplayName = body["owner_display_name"] as? String ?? "PulseTrackr user"
+        self.trustedContactDisplayName = body["trusted_contact_display_name"] as? String ?? "Trusted contact"
+        self.status = body["status"] as? String ?? "accepted"
+    }
+}
+
+struct SOSAppTrustedContactList: Equatable {
+    var outgoing: [SOSAppTrustedContactRelationship]
+    var incoming: [SOSAppTrustedContactRelationship]
+
+    init(resultData: Any) {
+        let body = resultData as? [String: Any] ?? [:]
+        self.outgoing = Self.relationships(from: body["outgoing"])
+        self.incoming = Self.relationships(from: body["incoming"])
+    }
+
+    private static func relationships(from value: Any?) -> [SOSAppTrustedContactRelationship] {
+        guard let rows = value as? [[String: Any]] else { return [] }
+        return rows.compactMap { try? SOSAppTrustedContactRelationship(resultData: $0) }
+    }
+}
+
+struct SOSAppAlert: Identifiable, Equatable {
+    var id: String
+    var sessionID: String
+    var ownerUID: String
+    var ownerDisplayName: String
+    var status: String
+    var lastKnownLocation: SOSLocationSnapshot?
+    var updatedAt: Date
+
+    init?(document: QueryDocumentSnapshot) {
+        let data = document.data()
+        guard
+            let sessionID = data["sessionId"] as? String,
+            let ownerUID = data["ownerUid"] as? String
+        else {
+            return nil
+        }
+
+        self.id = document.documentID
+        self.sessionID = sessionID
+        self.ownerUID = ownerUID
+        self.ownerDisplayName = data["ownerDisplayName"] as? String ?? "PulseTrackr user"
+        self.status = data["status"] as? String ?? "active"
+        self.lastKnownLocation = Self.location(from: data["lastKnownLocation"])
+        self.updatedAt = Self.date(from: data["updatedAt"]) ?? Self.date(from: data["createdAt"]) ?? Date.distantPast
+    }
+
+    private static func location(from value: Any?) -> SOSLocationSnapshot? {
+        guard let data = value as? [String: Any] else { return nil }
+        guard
+            let latitude = data["latitude"] as? Double,
+            let longitude = data["longitude"] as? Double
+        else {
+            return nil
+        }
+
+        return SOSLocationSnapshot(
+            latitude: latitude,
+            longitude: longitude,
+            horizontalAccuracyMeters: data["horizontalAccuracyMeters"] as? Double,
+            altitudeMeters: data["altitudeMeters"] as? Double,
+            speedMetersPerSecond: data["speedMetersPerSecond"] as? Double,
+            courseDegrees: data["courseDegrees"] as? Double,
+            capturedAt: date(from: data["capturedAt"]) ?? Date()
+        )
+    }
+
+    private static func date(from value: Any?) -> Date? {
+        if let timestamp = value as? Timestamp {
+            return timestamp.dateValue()
+        }
+        return SOSPayloadCoding.date(from: value)
+    }
+}
+
+final class SOSAppAlertObservation {
+    private let registration: ListenerRegistration
+
+    init(registration: ListenerRegistration) {
+        self.registration = registration
+    }
+
+    deinit {
+        registration.remove()
+    }
+}
+
+struct SOSNotificationSummary: Equatable {
+    var queued: Int
+    var sent: Int
+    var failed: Int
+    var skipped: Int
+    var optedOut: Int
+
+    init(queued: Int = 0, sent: Int = 0, failed: Int = 0, skipped: Int = 0, optedOut: Int = 0) {
+        self.queued = queued
+        self.sent = sent
+        self.failed = failed
+        self.skipped = skipped
+        self.optedOut = optedOut
+    }
+
+    init(resultData: Any?) {
+        guard let body = resultData as? [String: Any] else {
+            self.init()
+            return
+        }
+
+        self.init(
+            queued: Self.int(body["queued"]),
+            sent: Self.int(body["sent"]),
+            failed: Self.int(body["failed"]),
+            skipped: Self.int(body["skipped"]),
+            optedOut: Self.int(body["optedOut"] ?? body["opted_out"])
+        )
+    }
+
+    private static func int(_ value: Any?) -> Int {
+        if let value = value as? Int { return value }
+        if let value = value as? NSNumber { return value.intValue }
+        return 0
+    }
+}
+
+private extension SOSLocationSnapshot {
+    var contractDTO: ContractDTO.SOSLocation {
+        ContractDTO.SOSLocation(
+            altitudeMeters: altitudeMeters,
+            capturedAt: capturedAt,
+            courseDegrees: courseDegrees,
+            horizontalAccuracyMeters: horizontalAccuracyMeters,
+            latitude: latitude,
+            longitude: longitude,
+            speedMetersPerSecond: speedMetersPerSecond
+        )
+    }
+}
+
+private extension SOSDirectionOfTravel {
+    var contractDTO: ContractDTO.DirectionOfTravel {
+        ContractDTO.DirectionOfTravel(
+            bearingDegrees: bearingDegrees,
+            computedFromPointCount: computedFromPointCount,
+            speedMetersPerSecond: speedMetersPerSecond
+        )
+    }
+}
+
+private extension SOSDeviceMetadata {
+    var contractDTO: ContractDTO.SOSDevice {
+        ContractDTO.SOSDevice(
+            appVersion: appVersion,
+            batteryLevelPercent: batteryLevelPercent,
+            batteryState: batteryState,
+            buildNumber: buildNumber,
+            deviceModel: deviceModel,
+            lowPowerModeEnabled: lowPowerModeEnabled ? true : nil,
+            networkInterfaceTypes: networkInterfaceTypes.isEmpty ? nil : networkInterfaceTypes,
+            networkStatus: networkStatus,
+            systemVersion: systemVersion
+        )
+    }
+}
+
+private extension SOSPrivacyPolicy {
+    var contractDTO: ContractDTO.PrivacyPolicy {
+        ContractDTO.PrivacyPolicy(
+            adminAccessExpiresAfterSeconds: Int(adminAccessExpiresAfterSeconds),
+            auditPrivilegedAccess: auditPrivilegedAccess,
+            includeRecentTrail: includeRecentTrail,
+            lawEnforcementAccessRequiresActiveSession: lawEnforcementAccessRequiresActiveSession,
+            liveLocationUpdateIntervalSeconds: Int(liveLocationUpdateIntervalSeconds),
+            recentTrailMaxAgeSeconds: Int(recentTrailMaxAgeSeconds),
+            recentTrailMaxPoints: recentTrailMaxPoints,
+            shareExactLocationWithTrustedContacts: shareExactLocationWithTrustedContacts
+        )
+    }
+}
+
+private extension SOSTrustedContactNotificationTarget {
+    var contractDTO: ContractDTO.TrustedContact {
+        ContractDTO.TrustedContact(
+            appRelationshipID: appRelationshipID,
+            appUserUid: appUserUID,
+            channels: channels.compactMap(\.contractDTO),
+            consentedAt: consentedAt,
+            contactID: contactID.uuidString,
+            displayName: displayName,
+            emailAddress: emailAddress,
+            phoneNumber: phoneNumber,
+            relationshipLabel: relationshipLabel
+        )
+    }
+}
+
+private extension SOSTrustedContactChannel {
+    var contractDTO: ContractDTO.NotificationChannel? {
+        ContractDTO.NotificationChannel(rawValue: rawValue)
+    }
+}
+
+private extension SOSResolutionReason {
+    var contractDTO: ContractDTO.ResolutionReason {
+        ContractDTO.ResolutionReason(rawValue: rawValue) ?? .userResolved
+    }
+}
+
+private extension ContractDTO.SOSLocation {
+    var functionPayload: [String: Any] {
+        [
+            "latitude": latitude,
+            "longitude": longitude,
+            "horizontal_accuracy_meters": horizontalAccuracyMeters as Any,
+            "altitude_meters": altitudeMeters as Any,
+            "speed_meters_per_second": speedMetersPerSecond as Any,
+            "course_degrees": courseDegrees as Any,
+            "captured_at": SOSPayloadCoding.string(from: capturedAt)
+        ].compactingNilValuesForSOS
+    }
+}
+
+private extension ContractDTO.DirectionOfTravel {
+    var functionPayload: [String: Any] {
+        [
+            "bearing_degrees": bearingDegrees as Any,
+            "speed_meters_per_second": speedMetersPerSecond as Any,
+            "computed_from_point_count": computedFromPointCount as Any
+        ].compactingNilValuesForSOS
+    }
+}
+
+private extension ContractDTO.SOSDevice {
+    var functionPayload: [String: Any] {
+        [
+            "battery_level_percent": batteryLevelPercent as Any,
+            "battery_state": batteryState as Any,
+            "low_power_mode_enabled": lowPowerModeEnabled as Any,
+            "network_status": networkStatus as Any,
+            "network_interface_types": networkInterfaceTypes as Any,
+            "app_version": appVersion as Any,
+            "build_number": buildNumber as Any,
+            "device_model": deviceModel as Any,
+            "system_version": systemVersion as Any
+        ].compactingNilValuesForSOS
+    }
+}
+
+private extension ContractDTO.PrivacyPolicy {
+    var functionPayload: [String: Any] {
+        [
+            "include_recent_trail": includeRecentTrail,
+            "recent_trail_max_points": recentTrailMaxPoints,
+            "recent_trail_max_age_seconds": recentTrailMaxAgeSeconds,
+            "live_location_update_interval_seconds": liveLocationUpdateIntervalSeconds,
+            "share_exact_location_with_trusted_contacts": shareExactLocationWithTrustedContacts,
+            "admin_access_expires_after_seconds": adminAccessExpiresAfterSeconds,
+            "law_enforcement_access_requires_active_session": lawEnforcementAccessRequiresActiveSession,
+            "audit_privileged_access": auditPrivilegedAccess
+        ]
+    }
+}
+
+private extension ContractDTO.TrustedContact {
+    var functionPayload: [String: Any] {
+        [
+            "contact_id": contactID,
+            "display_name": displayName,
+            "relationship_label": relationshipLabel as Any,
+            "phone_number": phoneNumber as Any,
+            "email_address": emailAddress as Any,
+            "app_user_uid": appUserUid as Any,
+            "app_relationship_id": appRelationshipID as Any,
+            "channels": channels.map(\.rawValue),
+            "consented_at": consentedAt.map(SOSPayloadCoding.string(from:)) as Any
+        ].compactingNilValuesForSOS
     }
 }
 

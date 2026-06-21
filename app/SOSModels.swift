@@ -1,7 +1,7 @@
 import CoreLocation
 import Foundation
 
-enum SOSSessionState: String, Identifiable {
+enum SOSSessionState: String, Codable, Identifiable {
     case active
     case stopping
     case stopped
@@ -10,7 +10,7 @@ enum SOSSessionState: String, Identifiable {
     var id: String { rawValue }
 }
 
-enum SOSQueueEventKind: String, Identifiable {
+enum SOSQueueEventKind: String, Codable, Identifiable {
     case started
     case locationUpdated
     case stopped
@@ -19,7 +19,7 @@ enum SOSQueueEventKind: String, Identifiable {
     var id: String { rawValue }
 }
 
-enum SOSQueueStatus: String, Identifiable {
+enum SOSQueueStatus: String, Codable, Identifiable {
     case queued
     case waitingForRemote
     case delivered
@@ -62,6 +62,22 @@ struct SOSTrailPoint: Identifiable {
         speed = nil
         course = nil
         horizontalAccuracy = nil
+    }
+
+    init(
+        id: UUID,
+        coordinate: CLLocationCoordinate2D,
+        timestamp: Date,
+        speed: CLLocationSpeed?,
+        course: CLLocationDirection?,
+        horizontalAccuracy: CLLocationAccuracy?
+    ) {
+        self.id = id
+        self.coordinate = coordinate
+        self.timestamp = timestamp
+        self.speed = speed
+        self.course = course
+        self.horizontalAccuracy = horizontalAccuracy
     }
 }
 

@@ -81,7 +81,7 @@ struct MapboxIncidentMapView: View {
         }
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.hidden, for: .navigationBar)
-        .onAppear { locationManager.requestCurrentLocation() }
+        .onAppear { locationManager.refreshCurrentLocationIfAuthorized() }
         .onReceive(locationManager.$currentCoordinate) { coordinate in
             guard let coordinate, !hasCenteredOnUser else { return }
             hasCenteredOnUser = true

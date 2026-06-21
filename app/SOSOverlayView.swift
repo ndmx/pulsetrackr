@@ -252,10 +252,12 @@ struct SOSOverlayView: View {
                     .foregroundStyle(.white.opacity(0.42))
 
                 ForEach(sosStore.activeTrustedContacts.prefix(3)) { contact in
+                    let isOptedOut = sosStore.optedOutContactIDs.contains(contact.id)
+                    let isAlerted = sosStore.alertedContactIDs.contains(contact.id)
                     HStack(spacing: 8) {
-                        Image(systemName: sosStore.alertedContactIDs.contains(contact.id) ? "bell.badge.fill" : "bell.fill")
+                        Image(systemName: isOptedOut ? "bell.slash.fill" : isAlerted ? "bell.badge.fill" : "bell.fill")
                             .font(.caption)
-                            .foregroundStyle(sosStore.alertedContactIDs.contains(contact.id) ? DS.Color.positive : .white.opacity(0.52))
+                            .foregroundStyle(isOptedOut ? IncidentSeverity.medium.tint : isAlerted ? DS.Color.positive : .white.opacity(0.52))
                             .frame(width: 18)
                         Text(contact.displayName)
                             .font(DS.Font.caption())
@@ -263,10 +265,10 @@ struct SOSOverlayView: View {
                             .foregroundStyle(.white.opacity(0.78))
                             .lineLimit(1)
                         Spacer()
-                        Text(sosStore.alertedContactIDs.contains(contact.id) ? "alerted" : "ready")
+                        Text(isOptedOut ? "opted out" : isAlerted ? "alerted" : "ready")
                             .font(DS.Font.caption2())
                             .fontWeight(.bold)
-                            .foregroundStyle(sosStore.alertedContactIDs.contains(contact.id) ? DS.Color.positive : .white.opacity(0.46))
+                            .foregroundStyle(isOptedOut ? IncidentSeverity.medium.tint : isAlerted ? DS.Color.positive : .white.opacity(0.46))
                     }
                 }
 
