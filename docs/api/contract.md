@@ -118,6 +118,14 @@ Definition: `PushPlatform`
 | --- | --- | --- | --- |
 | _(none)_ |  |  |  |
 
+### SessionKind
+
+Definition: `SessionKind`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| _(none)_ |  |  |  |
+
 ### IncidentEvidence
 
 Definition: `IncidentEvidence`
@@ -308,6 +316,8 @@ Definition: `ActivationPayload`
 | `trustedContacts` | array<`TrustedContact`> | yes |  |
 | `device` | `SOSDevice` | yes |  |
 | `privacy` | `PrivacyPolicy` | yes |  |
+| `sessionKind` | `SessionKind` | no |  |
+| `escortRelationshipId` | `string` | no | max length: 160 |
 
 ### LocationUpdatePayload
 

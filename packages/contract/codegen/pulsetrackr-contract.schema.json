@@ -45,6 +45,9 @@
     "PushPlatform": {
       "$ref": "#/definitions/PushPlatform"
     },
+    "SessionKind": {
+      "$ref": "#/definitions/SessionKind"
+    },
     "IncidentEvidence": {
       "$ref": "#/definitions/IncidentEvidence"
     },
@@ -252,7 +255,8 @@
         "user_resolved",
         "false_alarm",
         "timed_out",
-        "transferred_to_care_team"
+        "transferred_to_care_team",
+        "arrived_safely"
       ]
     },
     "ReporterTrustTier": {
@@ -266,6 +270,13 @@
       "type": "string",
       "enum": [
         "ios"
+      ]
+    },
+    "SessionKind": {
+      "type": "string",
+      "enum": [
+        "sos",
+        "escort"
       ]
     },
     "IncidentEvidence": {
@@ -866,6 +877,13 @@
         },
         "privacy": {
           "$ref": "#/definitions/PrivacyPolicy"
+        },
+        "sessionKind": {
+          "$ref": "#/definitions/SessionKind"
+        },
+        "escortRelationshipId": {
+          "type": "string",
+          "maxLength": 160
         }
       },
       "required": [

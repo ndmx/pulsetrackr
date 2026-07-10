@@ -13,16 +13,20 @@ struct ActivationPayload: Codable {
     let clientSessionID: String
     let device: SOSDevice
     let directionOfTravel: DirectionOfTravel?
+    let escortRelationshipID: String?
     let lastKnownLocation: SOSLocation
     let privacy: PrivacyPolicy
     let recentTrail: [SOSLocation]
+    let sessionKind: SessionKind?
     let source: String
     let trustedContacts: [TrustedContact]
 
     enum CodingKeys: String, CodingKey {
         case activatedAt
         case clientSessionID = "clientSessionId"
-        case device, directionOfTravel, lastKnownLocation, privacy, recentTrail, source, trustedContacts
+        case device, directionOfTravel
+        case escortRelationshipID = "escortRelationshipId"
+        case lastKnownLocation, privacy, recentTrail, sessionKind, source, trustedContacts
     }
 }
 
@@ -78,6 +82,11 @@ struct PrivacyPolicy: Codable {
 
 
 
+
+enum SessionKind: String, Codable {
+    case escort = "escort"
+    case sos = "sos"
+}
 
 // MARK: - TrustedContact
 struct TrustedContact: Codable {
@@ -490,6 +499,7 @@ struct ResolutionPayload: Codable {
 
 
 enum ResolutionReason: String, Codable {
+    case arrivedSafely = "arrived_safely"
     case falseAlarm = "false_alarm"
     case timedOut = "timed_out"
     case transferredToCareTeam = "transferred_to_care_team"

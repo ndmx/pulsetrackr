@@ -38,6 +38,7 @@ const definitions = {
   ResolutionReason: C.resolutionReason,
   ReporterTrustTier: C.reporterTrustTier,
   PushPlatform: C.pushPlatform,
+  SessionKind: C.sessionKind,
   // ── incident ──
   IncidentEvidence: C.incidentEvidence,
   IncidentEvidenceSummary: C.incidentEvidenceSummary,

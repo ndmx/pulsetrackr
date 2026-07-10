@@ -91,8 +91,17 @@ export const resolutionReason = z.enum([
   'false_alarm',
   'timed_out',
   'transferred_to_care_team',
+  'arrived_safely',
 ]);
 export type ResolutionReason = z.infer<typeof resolutionReason>;
+
+/**
+ * Session kind: a real SOS emergency vs a "walk with me" escort session. Escort
+ * sessions reuse the SOS trail machinery but alert exactly one app trusted
+ * contact and never trigger the Twilio fan-out.
+ */
+export const sessionKind = z.enum(['sos', 'escort']);
+export type SessionKind = z.infer<typeof sessionKind>;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Location snapshot — mirrors sanitizeLocationSnapshot()
@@ -226,10 +235,14 @@ export const activationPayload = z.object({
   recentTrail: z.array(sosLocation).max(HARD_LIMITS.recentTrailMaxPoints),
   /** null when absent. */
   directionOfTravel: directionOfTravel.nullable(),
-  /** Capped at 10 deliverable contacts. */
+  /** Capped at 10 deliverable contacts. Must be empty for escort sessions. */
   trustedContacts: z.array(trustedContact).max(MAX_TRUSTED_CONTACTS),
   device: sosDevice,
   privacy: privacyPolicy,
+  /** Absent means 'sos' (legacy clients predate escort sessions). */
+  sessionKind: sessionKind.optional(),
+  /** Required iff sessionKind is 'escort': the accepted app relationship to alert. */
+  escortRelationshipId: optionalBoundedString(160),
 });
 export type ActivationPayload = z.infer<typeof activationPayload>;
 
