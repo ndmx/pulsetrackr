@@ -5,6 +5,7 @@ struct ContentView: View {
     @StateObject private var locationManager = LocationManager()
     @StateObject private var sosStore = SOSStore()
     @State private var selectedTab: AppTab = .map
+    @State private var deepLinkIncident: Incident?
     @State private var isShowingOpeningAnimation = true
     @AppStorage(AppStorageKey.hasSeenLaunch) private var hasSeenLaunch = false
     @AppStorage(AppStorageKey.launchLastSeenAt) private var launchLastSeenAt = 0.0
@@ -36,6 +37,19 @@ struct ContentView: View {
             withAnimation(.easeInOut(duration: 0.35)) {
                 isShowingOpeningAnimation = false
             }
+        }
+        .onOpenURL { url in
+            guard case .incident(let id) = DeepLinkRouter.destination(for: url) else { return }
+            selectedTab = .feed
+            Task {
+                deepLinkIncident = await incidentStore.incidentForDeepLink(id: id)
+            }
+        }
+        .sheet(item: $deepLinkIncident) { incident in
+            NavigationStack {
+                IncidentDetailView(incident: incident)
+            }
+            .environmentObject(incidentStore)
         }
     }
 

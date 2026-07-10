@@ -201,6 +201,31 @@ final class IncidentStore: ObservableObject {
         lookup[id].map { incidents[$0] }
     }
 
+    /// Resolves an incident for a deep link. Prefer the in-memory feed when the id
+    /// already matches a store entry (local UUID or remote document id); otherwise
+    /// fetch once from the public remote store without inserting into the feed.
+    @MainActor
+    func incidentForDeepLink(id: String) async -> Incident? {
+        let needle = id.lowercased()
+        if let uuid = UUID(uuidString: id), let match = incident(withID: uuid) {
+            return match
+        }
+        if let match = incidents.first(where: {
+            $0.id.uuidString.lowercased() == needle
+                || $0.remoteDocumentID?.lowercased() == needle
+        }) {
+            return match
+        }
+
+        guard let remoteStore else { return nil }
+        do {
+            return try await remoteStore.fetchIncident(withID: id)
+        } catch {
+            lastSyncError = "We couldn't load that incident yet. Please try again."
+            return nil
+        }
+    }
+
     func confirm(_ incident: Incident) {
         record(.seen, for: incident)
     }

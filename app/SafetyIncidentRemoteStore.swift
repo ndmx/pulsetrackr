@@ -103,6 +103,16 @@ final class SafetyIncidentRemoteStore {
             .sorted { $0.reportedAt > $1.reportedAt }
     }
 
+    /// Single-document public feed read for deep-link resolution. Returns nil when the
+    /// document does not exist or cannot be decoded. Uses the same contract mapping as
+    /// the geo listener (no auth required for public collection reads).
+    func fetchIncident(withID id: String) async throws -> Incident? {
+        let snapshot = try await db.collection("safety_incidents_public").document(id).getDocument()
+        guard snapshot.exists, let data = snapshot.data() else { return nil }
+        guard let dto = Self.publicIncidentDTO(from: data) else { return nil }
+        return Self.incident(fromDTO: dto, documentID: snapshot.documentID)
+    }
+
     /// One-shot scalable feed read via the backend H3 callable. The backend expands the
     /// covering H3 cells and filters expiry/status/privacy server-side, returning
     /// contract-shaped public incidents. Used as a complement to the live geohash
