@@ -53,6 +53,22 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    match /user_push_devices_private/{deviceId} {
+      allow read, write: if false;
+    }
+
+    match /incident_push_markers_private/{markerId} {
+      allow read, write: if false;
+    }
+
+    match /incident_push_attempts_private/{attemptId} {
+      allow read, write: if false;
+    }
+
+    match /incident_push_dlq_private/{entryId} {
+      allow read, write: if false;
+    }
+
     match /sos_sessions_private/{sessionId} {
       allow read, write: if false;
     }
