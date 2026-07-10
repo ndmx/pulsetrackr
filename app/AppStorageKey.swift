@@ -18,4 +18,5 @@ enum AppStorageKey {
     /// a trusted contact"). Reused by the add-contact flow and the In-app alerts
     /// section so the owner only types it once.
     static let sosOwnerDisplayName    = "sosOwnerDisplayName"
+    static let showDensityLayer       = "showDensityLayer"
 }

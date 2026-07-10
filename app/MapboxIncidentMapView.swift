@@ -10,6 +10,7 @@ struct MapboxIncidentMapView: View {
     @AppStorage(AppStorageKey.watchRadius) private var watchRadius = 3.0
     @AppStorage(AppStorageKey.urgentAlerts) private var urgentAlerts = true
     @AppStorage(AppStorageKey.communityAlerts) private var communityAlerts = true
+    @AppStorage(AppStorageKey.showDensityLayer) private var showDensityLayer = false
     @State private var selectedIncident: Incident?
     @State private var selectedCategory: IncidentCategory?
     @State private var isShowingCategoryFilters = false
@@ -29,6 +30,10 @@ struct MapboxIncidentMapView: View {
             if proxy.size.width > 1, proxy.size.height > 1 {
                 ZStack(alignment: .bottom) {
                     Map(viewport: $viewport) {
+                        if showDensityLayer {
+                            MapboxDensityLayer(incidents: incidentStore.activeIncidents)
+                        }
+
                         if isLocationAuthorized {
                             Puck2D(bearing: .heading)
                                 .showsAccuracyRing(true)
@@ -166,6 +171,22 @@ struct MapboxIncidentMapView: View {
                 .buttonStyle(.plain)
 
                 Spacer()
+
+                Button {
+                    showDensityLayer.toggle()
+                } label: {
+                    Image(systemName: showDensityLayer ? "flame.fill" : "flame")
+                        .font(.headline)
+                        .foregroundStyle(.white)
+                        .frame(width: 44, height: 44)
+                        .background(showDensityLayer ? DS.Color.accent.opacity(0.86) : .black.opacity(0.42), in: Circle())
+                        .overlay(
+                            Circle()
+                                .stroke(.white.opacity(showDensityLayer ? 0.32 : 0), lineWidth: 1)
+                        )
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Toggle density heatmap")
 
                 Button(action: focusOnUserLocation) {
                     Image(systemName: "location.viewfinder")
