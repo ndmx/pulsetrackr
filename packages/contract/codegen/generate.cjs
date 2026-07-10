@@ -36,6 +36,8 @@ const definitions = {
   LegalProcessType: C.legalProcessType,
   NotificationChannel: C.notificationChannel,
   ResolutionReason: C.resolutionReason,
+  ReporterTrustTier: C.reporterTrustTier,
+  PushPlatform: C.pushPlatform,
   // ── incident ──
   IncidentEvidence: C.incidentEvidence,
   IncidentEvidenceSummary: C.incidentEvidenceSummary,
@@ -54,6 +56,9 @@ const definitions = {
   ResolutionPayload: C.resolutionPayload,
   LawEnforcementRequestPayload: C.lawEnforcementRequestPayload,
   LawEnforcementReviewPayload: C.lawEnforcementReviewPayload,
+  // ── push ──
+  RegisterPushDevicePayload: C.registerPushDevicePayload,
+  PushDeviceRecord: C.pushDeviceRecord,
 };
 
 // Sanity: every name must resolve to a defined schema (catches a renamed/removed export).

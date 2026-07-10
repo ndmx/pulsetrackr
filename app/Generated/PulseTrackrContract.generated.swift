@@ -354,6 +354,7 @@ struct PublicIncident: Codable {
     let publicH3Cell: String?
     let publicH3Resolution: Int?
     let reportedAt: Date
+    let reporterTrustTier: ReporterTrustTier?
     let severity: IncidentSeverity
     let source: String?
     let status: IncidentStatus
@@ -379,6 +380,7 @@ struct PublicIncident: Codable {
         case publicH3Cell = "public_h3_cell"
         case publicH3Resolution = "public_h3_resolution"
         case reportedAt = "reported_at"
+        case reporterTrustTier = "reporter_trust_tier"
         case severity, source, status, subtype, summary, title
         case unsafeReports = "unsafe_reports"
     }
@@ -394,6 +396,35 @@ enum LocationPrivacyPolicy: String, Codable {
 enum LocationRevealStatus: String, Codable {
     case pendingKAnonymity = "pending_k_anonymity"
     case revealed = "revealed"
+}
+
+enum ReporterTrustTier: String, Codable {
+    case standard = "standard"
+    case trusted = "trusted"
+}
+
+// MARK: - PushDeviceRecord
+struct PushDeviceRecord: Codable {
+    let appVersion: String
+    let fcmToken: String
+    let ownerUid: String
+    let platform: PushPlatform
+    let subscribedTopics: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case appVersion = "app_version"
+        case fcmToken = "fcm_token"
+        case ownerUid = "owner_uid"
+        case platform
+        case subscribedTopics = "subscribed_topics"
+    }
+}
+
+
+
+
+enum PushPlatform: String, Codable {
+    case ios = "ios"
 }
 
 // MARK: - RedactedTrustedContact
@@ -412,6 +443,30 @@ struct RedactedTrustedContact: Codable {
         case channels, consentedAt
         case contactID = "contactId"
         case displayName, hasAppRoute, hasEmailAddress, phoneLast4, relationshipLabel
+    }
+}
+
+
+
+
+// MARK: - RegisterPushDevicePayload
+struct RegisterPushDevicePayload: Codable {
+    let appVersion: String
+    let communityAlerts: Bool
+    let fcmToken: String
+    let latitude: Double
+    let longitude: Double
+    let platform: PushPlatform
+    let urgentAlerts: Bool
+    let watchRadiusKM: Double
+
+    enum CodingKeys: String, CodingKey {
+        case appVersion = "app_version"
+        case communityAlerts = "community_alerts"
+        case fcmToken = "fcm_token"
+        case latitude, longitude, platform
+        case urgentAlerts = "urgent_alerts"
+        case watchRadiusKM = "watch_radius_km"
     }
 }
 

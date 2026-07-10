@@ -185,6 +185,14 @@ export const incidentEvidenceSummary = z.object({
 });
 export type IncidentEvidenceSummary = z.infer<typeof incidentEvidenceSummary>;
 
+// ─── reporterTrustTier ───────────────────────────────────────────────────────────
+// Reputation tier stamped onto public incidents at submit time. Derived server-side
+// from `reporter_reputation_private` (confirmed-accurate history — never volume);
+// absent means 'standard'. Deliberately a tier, not a score: the public read model
+// must never leak reporter identity or a fingerprintable value.
+export const reporterTrustTier = z.enum(['standard', 'trusted']);
+export type ReporterTrustTier = z.infer<typeof reporterTrustTier>;
+
 export const publicIncident = z.object({
   title: boundedString(120),
   summary: boundedString(2000),
@@ -211,5 +219,7 @@ export const publicIncident = z.object({
   evidence_summary: incidentEvidenceSummary.optional(),
   reported_at: isoTimestamp,
   source: boundedString(40).optional(),
+  /** Reporter reputation tier at submit time — tier only, never an identity. */
+  reporter_trust_tier: reporterTrustTier.optional(),
 });
 export type PublicIncident = z.infer<typeof publicIncident>;

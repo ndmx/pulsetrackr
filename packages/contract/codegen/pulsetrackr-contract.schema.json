@@ -39,6 +39,12 @@
     "ResolutionReason": {
       "$ref": "#/definitions/ResolutionReason"
     },
+    "ReporterTrustTier": {
+      "$ref": "#/definitions/ReporterTrustTier"
+    },
+    "PushPlatform": {
+      "$ref": "#/definitions/PushPlatform"
+    },
     "IncidentEvidence": {
       "$ref": "#/definitions/IncidentEvidence"
     },
@@ -86,6 +92,12 @@
     },
     "LawEnforcementReviewPayload": {
       "$ref": "#/definitions/LawEnforcementReviewPayload"
+    },
+    "RegisterPushDevicePayload": {
+      "$ref": "#/definitions/RegisterPushDevicePayload"
+    },
+    "PushDeviceRecord": {
+      "$ref": "#/definitions/PushDeviceRecord"
     }
   },
   "definitions": {
@@ -241,6 +253,19 @@
         "false_alarm",
         "timed_out",
         "transferred_to_care_team"
+      ]
+    },
+    "ReporterTrustTier": {
+      "type": "string",
+      "enum": [
+        "standard",
+        "trusted"
+      ]
+    },
+    "PushPlatform": {
+      "type": "string",
+      "enum": [
+        "ios"
       ]
     },
     "IncidentEvidence": {
@@ -477,6 +502,9 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 40
+        },
+        "reporter_trust_tier": {
+          "$ref": "#/definitions/ReporterTrustTier"
         }
       },
       "required": [
@@ -1049,6 +1077,92 @@
         "reviewNote",
         "expiresAt",
         "reviewedAt"
+      ],
+      "additionalProperties": false
+    },
+    "RegisterPushDevicePayload": {
+      "type": "object",
+      "properties": {
+        "fcm_token": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "platform": {
+          "$ref": "#/definitions/PushPlatform"
+        },
+        "app_version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40
+        },
+        "urgent_alerts": {
+          "type": "boolean"
+        },
+        "community_alerts": {
+          "type": "boolean"
+        },
+        "latitude": {
+          "$ref": "#/definitions/SubmitIncidentPayload/properties/latitude"
+        },
+        "longitude": {
+          "$ref": "#/definitions/SubmitIncidentPayload/properties/longitude"
+        },
+        "watch_radius_km": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 100
+        }
+      },
+      "required": [
+        "fcm_token",
+        "platform",
+        "app_version",
+        "urgent_alerts",
+        "community_alerts",
+        "latitude",
+        "longitude",
+        "watch_radius_km"
+      ],
+      "additionalProperties": false
+    },
+    "PushDeviceRecord": {
+      "type": "object",
+      "properties": {
+        "owner_uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "fcm_token": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "platform": {
+          "$ref": "#/definitions/PushPlatform"
+        },
+        "app_version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40
+        },
+        "subscribed_topics": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 96
+          },
+          "maxItems": 64
+        }
+      },
+      "required": [
+        "owner_uid",
+        "fcm_token",
+        "platform",
+        "app_version",
+        "subscribed_topics"
       ],
       "additionalProperties": false
     }

@@ -102,6 +102,22 @@ Definition: `ResolutionReason`
 | --- | --- | --- | --- |
 | _(none)_ |  |  |  |
 
+### ReporterTrustTier
+
+Definition: `ReporterTrustTier`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| _(none)_ |  |  |  |
+
+### PushPlatform
+
+Definition: `PushPlatform`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| _(none)_ |  |  |  |
+
 ### IncidentEvidence
 
 Definition: `IncidentEvidence`
@@ -174,6 +190,7 @@ Definition: `PublicIncident`
 | `evidence_summary` | `IncidentEvidenceSummary` | no |  |
 | `reported_at` | `string` | yes | format: date-time |
 | `source` | `string` | no | max length: 40 |
+| `reporter_trust_tier` | `ReporterTrustTier` | no |  |
 
 ### IncidentState
 
@@ -348,6 +365,33 @@ Definition: `LawEnforcementReviewPayload`
 | `reviewNote` | `string` | yes | max length: 2000 |
 | `expiresAt` | `reported_at` or `null` | yes |  |
 | `reviewedAt` | `reported_at` | yes |  |
+
+### RegisterPushDevicePayload
+
+Definition: `RegisterPushDevicePayload`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `fcm_token` | `string` | yes | max length: 512 |
+| `platform` | `PushPlatform` | yes |  |
+| `app_version` | `string` | yes | max length: 40 |
+| `urgent_alerts` | `boolean` | yes |  |
+| `community_alerts` | `boolean` | yes |  |
+| `latitude` | `latitude` | yes |  |
+| `longitude` | `longitude` | yes |  |
+| `watch_radius_km` | `number` | yes | max: 100 |
+
+### PushDeviceRecord
+
+Definition: `PushDeviceRecord`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `owner_uid` | `string` | yes | max length: 128 |
+| `fcm_token` | `string` | yes | max length: 512 |
+| `platform` | `PushPlatform` | yes |  |
+| `app_version` | `string` | yes | max length: 40 |
+| `subscribed_topics` | array<`string`> | yes |  |
 
 ## Operational Notes
 
