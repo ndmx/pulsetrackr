@@ -15,6 +15,7 @@ const disclosure = require('./disclosure');
 const notifications = require('./notifications');
 const moderation = require('./moderation');
 const claims = require('./claims');
+const push = require('./push');
 
 // ── Incidents (public community feed) ──
 exports.submit_incident = incidents.submit_incident;
@@ -43,6 +44,9 @@ exports.revoke_sos_role_claim = claims.revoke_sos_role_claim;
 // ── Notifications (Twilio SMS opt-out webhook) ──
 exports.twilio_sms_webhook = notifications.twilio_sms_webhook;
 exports.processSosNotifications = notifications.processSosNotifications;
+exports.register_push_device = push.register_push_device;
+exports.onIncidentPublicWritten = push.onIncidentPublicWritten;
+exports.processIncidentAlerts = push.processIncidentAlerts;
 
 // Test-only surface, preserved for the existing test suite (test/*.test.js set
 // NODE_ENV=test then read require('../src/index').__test).
@@ -50,5 +54,6 @@ if (process.env.NODE_ENV === 'test') {
   exports.__test = {
     ...incidents.__test,
     ...moderation.__test,
+    ...push.__test,
   };
 }

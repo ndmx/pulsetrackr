@@ -42,6 +42,10 @@ test('raw SOS/private collections deny normal client access', async () => {
     'safety_incident_counter_shards_private/incident-1_confirmations_00',
     'safety_incident_counter_rollup_queue_private/incident-1',
     'safety_incident_counter_rollups_private/incident-1',
+    'user_push_devices_private/user-1_device-1',
+    'incident_push_markers_private/incident-1',
+    'incident_push_attempts_private/attempt-1',
+    'incident_push_dlq_private/entry-1',
     'sos_sessions_private/session-1',
     'sos_location_updates_private/update-1',
     'sos_access_grants_private/grant-1',
@@ -53,6 +57,24 @@ test('raw SOS/private collections deny normal client access', async () => {
   for (const path of privatePaths) {
     await assertFails(db.doc(path).get());
     await assertFails(db.doc(path).set({ probe: true }));
+  }
+});
+
+test('push private collections deny unauthenticated and non-admin client access', async () => {
+  const unauthenticated = testEnv.unauthenticatedContext().firestore();
+  const user = testEnv.authenticatedContext('user-1').firestore();
+  const privatePaths = [
+    'user_push_devices_private/user-1_device-1',
+    'incident_push_markers_private/incident-1',
+    'incident_push_attempts_private/attempt-1',
+    'incident_push_dlq_private/entry-1',
+  ];
+
+  for (const path of privatePaths) {
+    await assertFails(unauthenticated.doc(path).get());
+    await assertFails(unauthenticated.doc(path).set({ probe: true }));
+    await assertFails(user.doc(path).get());
+    await assertFails(user.doc(path).set({ probe: true }));
   }
 });
 

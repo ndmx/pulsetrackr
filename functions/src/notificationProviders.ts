@@ -1,3 +1,5 @@
+import { getMessaging, type Message } from 'firebase-admin/messaging';
+
 const TWILIO_API_BASE = 'https://api.twilio.com/2010-04-01';
 const TWILIO_EMAIL_API_URL = 'https://comms.twilio.com/v1/Emails';
 
@@ -60,6 +62,9 @@ export async function sendNotificationAttempt({
   contact,
   sessionId,
   location,
+  title,
+  body,
+  data,
   fetchImpl = fetch,
   env = process.env,
 }: any): Promise<NotificationResult> {
@@ -83,10 +88,27 @@ export async function sendNotificationAttempt({
       return sendTwilioEmail({ to: destination, message: buildSOSMessage({ sessionId, contact, channel, location }), fetchImpl, env });
     }
 
+    if (channel === 'app_push') {
+      return sendFcmPush({ token: destination, title, body, data });
+    }
+
     return skipped('unsupported_channel');
   } catch (error: any) {
     return failed(providerForChannel(channel), error.message || 'delivery_exception');
   }
+}
+
+export async function sendFcmPush({ token, title, body, data }: any): Promise<NotificationResult> {
+  const message = withoutUndefined({
+    token,
+    notification: {
+      title: cleanPushText(title, 120) || 'PulseTrackr alert',
+      body: cleanPushText(body, 500) || '',
+    },
+    data: cleanPushData(data),
+  }) as unknown as Message;
+  const messageId = await getMessaging().send(message);
+  return sent('fcm', messageId || null);
 }
 
 async function sendTwilioSms({ to, message, fetchImpl, env }: any): Promise<NotificationResult> {
@@ -222,6 +244,7 @@ function buildLocationContext(location: any): { label: string; mapUrl: string } 
 
 function providerForChannel(channel: string): string {
   if (channel === 'sms' || channel === 'phone_call' || channel === 'email') return 'twilio';
+  if (channel === 'app_push') return 'fcm';
   return 'unknown';
 }
 
@@ -287,4 +310,23 @@ function isTwilioOptOutError(json: any): boolean {
   if (code === 21610 || code === 30630) return true;
   const message = String(json?.message || json?.error_message || '').toLowerCase();
   return message.includes('opted out') || message.includes('unsubscribed');
+}
+
+function cleanPushText(value: unknown, maxLength: number): string {
+  return typeof value === 'string' ? value.trim().slice(0, maxLength) : '';
+}
+
+function cleanPushData(value: unknown): Record<string, string> | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const entries = Object.entries(value as Record<string, unknown>)
+    .map(([key, entryValue]) => [
+      cleanPushText(key, 128),
+      cleanPushText(entryValue, 1024),
+    ])
+    .filter(([key]) => key);
+  return entries.length ? Object.fromEntries(entries) : undefined;
+}
+
+function withoutUndefined(object: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(object).filter(([, value]) => value !== undefined));
 }
