@@ -174,7 +174,9 @@ struct FeedView: View {
 
     private var appleMapLayer: some View {
         Map(position: $cameraPosition) {
-            UserAnnotation()
+            if isLocationAuthorized {
+                UserAnnotation()
+            }
 
             ForEach(settingsFilteredIncidents) { incident in
                 if let coordinate = incident.coordinate {
@@ -191,6 +193,11 @@ struct FeedView: View {
         }
         .mapStyle(colorScheme == .dark ? .hybrid(elevation: .realistic) : .standard(elevation: .realistic))
         .ignoresSafeArea()
+    }
+
+    private var isLocationAuthorized: Bool {
+        locationManager.authorizationStatus == .authorizedWhenInUse
+            || locationManager.authorizationStatus == .authorizedAlways
     }
 
     private func topOverlay(sheetHeight: CGFloat) -> some View {
@@ -642,7 +649,7 @@ private struct IncidentCard: View {
             }
 
             HStack(spacing: DS.Space.sm) {
-                InfoPill(icon: incident.confidence.icon, title: incident.confidence.rawValue, color: incident.confidence.color)
+                InfoPill(icon: incident.confidence.icon, title: incident.confidenceLabel, color: incident.confidence.color)
                 InfoPill(icon: "eye.fill", title: "\(incident.confirmations)", color: DS.Color.textSecondary)
                 if incident.isHighRisk {
                     InfoPill(icon: "bell.fill", title: "Alert sent", color: DS.Color.alert)

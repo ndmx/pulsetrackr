@@ -30,6 +30,10 @@ struct H3CallableDecodeTests {
                     "geohash": "s0gs3y",
                     "public_h3_cell": "8828308281fffff",
                     "public_h3_resolution": 8,
+                    "location_reveal_status": "revealed",
+                    "location_privacy_policy": "h3_k_anonymous",
+                    "k_anonymity_threshold": 3,
+                    "k_anonymity_distinct_reporters": 4,
                     "confirmations": 4,
                     "disputes": 0,
                     "unsafe_reports": 1,
@@ -74,6 +78,7 @@ struct H3CallableDecodeTests {
         #expect(incident.confirmations == 4)
         #expect(incident.unsafeReports == 1)
         #expect(incident.coordinate != nil)
+        #expect(incident.locationRevealStatus == .revealed)
     }
 
     @Test func malformedBodiesDecodeToEmpty() {

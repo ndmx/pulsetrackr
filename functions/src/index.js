@@ -31,6 +31,7 @@ exports.list_app_trusted_contacts = sos.list_app_trusted_contacts;
 exports.revoke_app_trusted_contact = sos.revoke_app_trusted_contact;
 exports.append_sos_location = sos.append_sos_location;
 exports.resolve_sos = sos.resolve_sos;
+exports.get_sos_notification_status = sos.get_sos_notification_status;
 
 // ── Disclosure (law-enforcement requests, privileged access) ──
 exports.record_law_enforcement_request = disclosure.record_law_enforcement_request;

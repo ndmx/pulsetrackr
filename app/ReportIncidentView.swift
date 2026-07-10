@@ -63,10 +63,7 @@ struct ReportIncidentView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                ReportHero(
-                    locationStatus: locationStatus,
-                    hasPrivateCoordinate: hasReportLocation
-                )
+                ReportHero()
 
                 ReportComposer(
                     title: $title,
@@ -109,8 +106,6 @@ struct ReportIncidentView: View {
                 .opacity(canSubmit ? 1 : 0.5)
             }
             .padding(DS.Space.lg)
-            .contentShape(Rectangle())
-            .onTapGesture(perform: dismissKeyboard)
         }
         .background(DS.Color.background)
         .scrollDismissesKeyboard(.interactively)
@@ -344,9 +339,6 @@ private enum ReportField: Hashable {
 }
 
 private struct ReportHero: View {
-    var locationStatus: String
-    var hasPrivateCoordinate: Bool
-
     var body: some View {
         VStack(alignment: .leading, spacing: DS.Space.md) {
             Text("Report what is happening")
@@ -356,15 +348,6 @@ private struct ReportHero: View {
             Text("Show it, say it, or type it.")
                 .font(DS.Font.body())
                 .foregroundStyle(DS.Color.textSecondary)
-
-            let ok = hasPrivateCoordinate
-            Label(locationStatus, systemImage: ok ? "location.fill" : "location.slash.fill")
-                .font(DS.Font.label())
-                .foregroundStyle(ok ? DS.Color.positive : DS.Color.alert)
-                .padding(.horizontal, DS.Space.md)
-                .padding(.vertical, DS.Space.sm)
-                .background((ok ? DS.Color.positive : DS.Color.alert).opacity(0.12), in: Capsule())
-                .overlay(Capsule().stroke((ok ? DS.Color.positive : DS.Color.alert).opacity(0.3), lineWidth: 1))
         }
         .pulsePanel()
     }
@@ -430,12 +413,23 @@ private struct ReportComposer: View {
     }
 
     private var statusControls: some View {
-        HStack(spacing: DS.Space.md) {
-            StatusPill(title: "Happening now", icon: "dot.radiowaves.left.and.right", color: DS.Color.alert, isSelected: isOngoing) {
-                isOngoing = true
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: DS.Space.md) {
+                StatusPill(title: "Happening now", icon: "dot.radiowaves.left.and.right", color: DS.Color.alert, isSelected: isOngoing) {
+                    isOngoing = true
+                }
+                StatusPill(title: "Already happened", icon: "clock.arrow.circlepath", color: DS.Color.textSecondary, isSelected: !isOngoing) {
+                    isOngoing = false
+                }
             }
-            StatusPill(title: "Already happened", icon: "clock.arrow.circlepath", color: DS.Color.textSecondary, isSelected: !isOngoing) {
-                isOngoing = false
+
+            VStack(spacing: DS.Space.sm) {
+                StatusPill(title: "Happening now", icon: "dot.radiowaves.left.and.right", color: DS.Color.alert, isSelected: isOngoing) {
+                    isOngoing = true
+                }
+                StatusPill(title: "Already happened", icon: "clock.arrow.circlepath", color: DS.Color.textSecondary, isSelected: !isOngoing) {
+                    isOngoing = false
+                }
             }
         }
     }
@@ -455,7 +449,7 @@ private struct ReportComposer: View {
 
             LabeledReportField(
                 label: "Neighborhood or landmark",
-                placeholder: "e.g. Allen Avenue, Ikeja",
+                placeholder: "e.g. Allen Avenue",
                 text: $neighborhood,
                 focus: focusedField,
                 field: .neighborhood,
@@ -600,7 +594,12 @@ private struct StatusPill: View {
                     .font(.subheadline)
                 Text(title)
                     .font(DS.Font.bodyStrong())
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
             }
+            .padding(.horizontal, DS.Space.md)
+            .padding(.vertical, DS.Space.sm)
             .frame(maxWidth: .infinity, minHeight: 46)
             .background(isSelected ? color.opacity(0.16) : DS.Color.surfaceHigh, in: RoundedRectangle(cornerRadius: DS.Radius.md, style: .continuous))
             .overlay(
@@ -638,9 +637,7 @@ private struct LabeledReportField: View {
                     TextField(placeholder, text: $text, axis: .vertical)
                         .lineLimit(4...10)
                 } else {
-                    TextField(placeholder, text: $text)
-                        .submitLabel(submitLabel)
-                        .onSubmit(onSubmit)
+                    singleLineField
                 }
             }
             .font(.system(.title3, weight: .regular))
@@ -661,6 +658,27 @@ private struct LabeledReportField: View {
             RoundedRectangle(cornerRadius: DS.Radius.md, style: .continuous)
                 .stroke(DS.Color.hairline, lineWidth: DS.Stroke.hairline)
         )
+    }
+
+    private var singleLineField: some View {
+        ZStack(alignment: .leading) {
+            if text.isEmpty {
+                Text(placeholder)
+                    .font(.system(.title3, weight: .regular))
+                    .foregroundStyle(DS.Color.textTertiary)
+                    .multilineTextAlignment(.leading)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .allowsHitTesting(false)
+            }
+
+            TextField("", text: $text)
+                .submitLabel(submitLabel)
+                .onSubmit(onSubmit)
+                .frame(maxWidth: .infinity, minHeight: 54, alignment: .leading)
+                .contentShape(Rectangle())
+        }
+        .frame(maxWidth: .infinity, minHeight: 54, alignment: .leading)
     }
 }
 

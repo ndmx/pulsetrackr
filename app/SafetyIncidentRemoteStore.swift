@@ -334,6 +334,7 @@ final class SafetyIncidentRemoteStore {
             status: status,
             reporterCoordinate: nil,
             coordinate: coordinate,
+            locationRevealStatus: dto.locationRevealStatus.flatMap { IncidentLocationRevealStatus(rawValue: $0.rawValue) },
             neighborhood: dto.neighborhood,
             reportedAt: dto.reportedAt,
             confirmations: dto.confirmations,

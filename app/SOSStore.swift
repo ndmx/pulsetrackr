@@ -29,6 +29,7 @@ final class SOSStore: ObservableObject {
     private var appAlertObservation: SOSAppAlertObservation?
     private var isStartingAppAlertObservation = false
     private var isSyncingRemote = false
+    private var isPollingNotificationStatus = false
     private var nextLocationSequenceNumber = 0
     private var queuedActivationSessionID: UUID?
     private let outbox = OutboxQueue.shared
@@ -376,18 +377,88 @@ final class SOSStore: ObservableObject {
             try await drainSOSOutbox(remote: remote, force: force)
             lastSuccessfulUploadAt = .now
             deliveryState = .delivered
-        } catch {
-            if case SOSStoreError.noTrustedContactDelivery = error {
-                lastRemoteError = smsOptOutNotice ?? "SOS saved, but no trusted contact was reached. Check SMS/email provider setup and try again."
-            } else {
-                lastRemoteError = "Emergency updates could not upload. Keep moving if safe; PulseTrackr will retry."
+            if isActive, remoteSessionID != nil {
+                startNotificationStatusReadback()
             }
+        } catch {
+            lastRemoteError = uploadErrorMessage(for: error)
             markEvents(unsentEvents.map(\.id), status: .failed, incrementAttempt: true)
             deliveryState = .failed
         }
 
         isSyncingRemote = false
         persistSnapshot()
+    }
+
+    private func uploadErrorMessage(for error: Error) -> String {
+        switch error {
+        case SOSStoreError.noTrustedContactDelivery:
+            return smsOptOutNotice ?? "SOS saved, but no trusted contact was reached. Check the SMS/email provider setup and try again."
+        case SOSStoreError.missingRemoteSession:
+            return "SOS is saved, but one queued update is missing its server link. PulseTrackr will reconnect it before sending."
+        case SOSStoreError.missingLocation:
+            return "SOS is saved locally until your device has a current location."
+        case SOSStoreError.remoteUnavailable:
+            return "Emergency route is saved locally until Firebase SOS delivery is configured."
+        default:
+            break
+        }
+        if let remote = error as? SOSRemoteCallError {
+            #if DEBUG
+            return "\(remote.userMessage)\n\(remote.diagnosticMessage)"
+            #else
+            return remote.userMessage
+            #endif
+        }
+        #if DEBUG
+        let nsError = error as NSError
+        return "Emergency updates could not upload. Keep moving if safe; PulseTrackr will retry.\n\(nsError.domain) #\(nsError.code): \(nsError.localizedDescription)"
+        #else
+        return "Emergency updates could not upload. Keep moving if safe; PulseTrackr will retry."
+        #endif
+    }
+
+    /// Backend trusted-contact delivery runs in an async Cloud Task, so the activation
+    /// response comes back before SMS/email are actually sent. Poll the owner-scoped
+    /// status endpoint a few times so the SOS panel reflects real "alerted"/"opted out"
+    /// status instead of staying on "ready".
+    private func startNotificationStatusReadback() {
+        guard !isPollingNotificationStatus, let remote = configuredRemoteStore() else { return }
+        isPollingNotificationStatus = true
+
+        Task { [weak self] in
+            defer { self?.isPollingNotificationStatus = false }
+            let delaysSeconds: [UInt64] = [2, 4, 8, 12]
+            for delay in delaysSeconds {
+                try? await Task.sleep(nanoseconds: delay * 1_000_000_000)
+                guard let self, let sessionID = self.remoteSessionID, self.isActive else { return }
+                guard let status = try? await remote.fetchNotificationStatus(sessionID: sessionID) else { continue }
+                if self.applyNotificationStatus(status) { return }
+            }
+        }
+    }
+
+    /// Returns true once the backend notification saga has settled (so polling can stop).
+    @discardableResult
+    private func applyNotificationStatus(_ status: SOSNotificationStatus) -> Bool {
+        optedOutContactIDs.formUnion(status.trustedContactsOptedOut)
+        if !status.trustedContactsNotified.isEmpty {
+            alertedContactIDs.formUnion(status.trustedContactsNotified)
+            do {
+                try contactStore.markNotified(contactIDs: status.trustedContactsNotified)
+            } catch {
+                trustedContactError = "Your contacts were alerted, but we couldn't update their status on this device."
+            }
+            loadTrustedContacts()
+        }
+        if let notice = smsOptOutNotice {
+            lastRemoteError = notice
+        } else if status.notificationSummary.sent > 0 || !status.trustedContactsNotified.isEmpty || !status.appTrustedContactsNotified.isEmpty {
+            lastRemoteError = nil
+            deliveryState = .delivered
+        }
+        persistSnapshot()
+        return status.isSettled
     }
 
     private func configuredRemoteStore() -> SOSRemoteStore? {
@@ -588,7 +659,7 @@ final class SOSStore: ObservableObject {
         let operations = await outbox.dueOperations(
             for: [.sosActivate, .sosLocationUpdate, .sosResolve],
             now: force ? .distantFuture : .now
-        )
+        ).sorted(by: sosOutboxProcessingOrder)
 
         for operation in operations {
             await outbox.markProcessing(operation.id)
@@ -596,15 +667,45 @@ final class SOSStore: ObservableObject {
                 try await processSOSOutboxOperation(operation, remote: remote)
                 await outbox.remove(operation.id)
             } catch {
+                if isTerminalSOSOutboxError(error, for: operation) {
+                    markLocalEventDelivered(for: operation)
+                    await outbox.remove(operation.id)
+                    continue
+                }
                 await outbox.retryLater(operation.id, error: error, baseDelaySeconds: 10)
                 throw error
             }
         }
     }
 
+    private func sosOutboxProcessingOrder(_ lhs: OutboxOperation, _ rhs: OutboxOperation) -> Bool {
+        let leftPriority = sosOutboxPriority(lhs.kind)
+        let rightPriority = sosOutboxPriority(rhs.kind)
+        if leftPriority != rightPriority {
+            return leftPriority < rightPriority
+        }
+        return lhs.createdAt < rhs.createdAt
+    }
+
+    private func sosOutboxPriority(_ kind: OutboxOperationKind) -> Int {
+        switch kind {
+        case .sosActivate:
+            return 0
+        case .sosLocationUpdate:
+            return 1
+        case .sosResolve:
+            return 2
+        default:
+            return 3
+        }
+    }
+
     private func processSOSOutboxOperation(_ operation: OutboxOperation, remote: SOSRemoteStore) async throws {
         switch operation.payload {
         case .sosActivate(let payload):
+            guard payload.localSessionID == session?.id else {
+                return
+            }
             guard remoteSessionID == nil else {
                 markEvents(ofKind: .started, status: .delivered)
                 return
@@ -638,6 +739,10 @@ final class SOSStore: ObservableObject {
             markEvents(ofKind: .started, status: .delivered)
 
         case .sosLocationUpdate(let payload):
+            guard payload.localSessionID == session?.id else {
+                markEvents([payload.localEventID], status: .delivered)
+                return
+            }
             guard let sessionID = remoteSessionID ?? payload.remoteSessionID else {
                 throw SOSStoreError.missingRemoteSession
             }
@@ -652,6 +757,10 @@ final class SOSStore: ObservableObject {
             markEvents([payload.localEventID], status: .delivered)
 
         case .sosResolve(let payload):
+            guard payload.localSessionID == session?.id else {
+                markEvents([payload.localEventID], status: .delivered)
+                return
+            }
             guard let sessionID = remoteSessionID ?? payload.remoteSessionID else {
                 throw SOSStoreError.missingRemoteSession
             }
@@ -663,6 +772,31 @@ final class SOSStore: ObservableObject {
             )
             markEvents([payload.localEventID], status: .delivered)
 
+        default:
+            break
+        }
+    }
+
+    private func isTerminalSOSOutboxError(_ error: Error, for operation: OutboxOperation) -> Bool {
+        guard case .sosLocationUpdate = operation.payload else {
+            if case .sosResolve = operation.payload {
+                return isClosedRemoteSessionError(error)
+            }
+            return false
+        }
+        return isClosedRemoteSessionError(error)
+    }
+
+    private func isClosedRemoteSessionError(_ error: Error) -> Bool {
+        (error as? SOSRemoteCallError)?.isClosedSessionPrecondition == true
+    }
+
+    private func markLocalEventDelivered(for operation: OutboxOperation) {
+        switch operation.payload {
+        case .sosLocationUpdate(let payload):
+            markEvents([payload.localEventID], status: .delivered)
+        case .sosResolve(let payload):
+            markEvents([payload.localEventID], status: .delivered)
         default:
             break
         }

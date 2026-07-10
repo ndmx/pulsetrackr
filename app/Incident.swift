@@ -312,6 +312,11 @@ enum IncidentConfidence: String, Identifiable {
     }
 }
 
+enum IncidentLocationRevealStatus: String, Codable {
+    case pendingKAnonymity = "pending_k_anonymity"
+    case revealed = "revealed"
+}
+
 enum CommunitySignal: String, CaseIterable, Identifiable {
     case seen
     case notSeen
@@ -392,9 +397,10 @@ struct Incident: Identifiable, Equatable {
     var severity: IncidentSeverity
     var status: IncidentStatus
     var reporterCoordinate: CLLocationCoordinate2D?
-    /// Public map location. `nil` until the backend reveals a k-anonymous H3 cell
-    /// center, or when the incident has no location to show.
+    /// Public map location: a broad pending area for a single report, a revealed
+    /// k-anonymous H3 cell center after threshold, or nil when no location is shown.
     var coordinate: CLLocationCoordinate2D?
+    var locationRevealStatus: IncidentLocationRevealStatus? = nil
     var neighborhood: String
     var reportedAt: Date
     var confirmations: Int
@@ -424,6 +430,13 @@ struct Incident: Identifiable, Equatable {
         }
 
         return .unconfirmed
+    }
+
+    var confidenceLabel: String {
+        if locationRevealStatus == .pendingKAnonymity {
+            return "Suspected nearby report"
+        }
+        return confidence.rawValue
     }
 
     var isHighRisk: Bool {

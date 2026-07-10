@@ -62,7 +62,7 @@ struct IncidentDetailView: View {
             }
 
             VStack(alignment: .leading, spacing: DS.Space.sm) {
-                Label(liveIncident.confidence.rawValue, systemImage: liveIncident.confidence.icon)
+                Label(liveIncident.confidenceLabel, systemImage: liveIncident.confidence.icon)
                     .font(DS.Font.label())
                     .textCase(.uppercase)
                     .foregroundStyle(liveIncident.confidence.color)

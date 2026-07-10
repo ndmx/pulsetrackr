@@ -36,8 +36,10 @@ struct FeedMapboxLayer: View {
         GeometryReader { proxy in
             if proxy.size.width > 1, proxy.size.height > 1 {
                 Map(viewport: $viewport) {
-                    Puck2D(bearing: .heading)
-                        .showsAccuracyRing(true)
+                    if userCoordinate != nil {
+                        Puck2D(bearing: .heading)
+                            .showsAccuracyRing(true)
+                    }
 
                     ForEvery(mappableIncidents) { entry in
                         MapViewAnnotation(coordinate: entry.coordinate) {

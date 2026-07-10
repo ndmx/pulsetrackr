@@ -14,6 +14,8 @@ struct MapboxIncidentMapView: View {
     @State private var selectedCategory: IncidentCategory?
     @State private var isShowingCategoryFilters = false
     @State private var hasCenteredOnUser = false
+    @State private var isFollowingUserLocation = false
+    @State private var isShowingLocationRationale = false
     @State private var viewport: Viewport = {
         if let last = LocationManager.lastKnownCoordinate {
             return .camera(center: last, zoom: 15.1, bearing: -18, pitch: 44)
@@ -27,8 +29,10 @@ struct MapboxIncidentMapView: View {
             if proxy.size.width > 1, proxy.size.height > 1 {
                 ZStack(alignment: .bottom) {
                     Map(viewport: $viewport) {
-                        Puck2D(bearing: .heading)
-                            .showsAccuracyRing(true)
+                        if isLocationAuthorized {
+                            Puck2D(bearing: .heading)
+                                .showsAccuracyRing(true)
+                        }
 
                         ForEvery(sosStore.trailArtifacts) { artifact in
                             MapViewAnnotation(coordinate: artifact.coordinate) {
@@ -90,24 +94,30 @@ struct MapboxIncidentMapView: View {
             }
         }
         .overlay(alignment: .center) {
-            if needsLocationPrompt {
-                LocationPromptCard(
+            if isShowingLocationRationale {
+                Color.black.opacity(0.38)
+                    .ignoresSafeArea()
+                    .transition(.opacity)
+                    .onTapGesture {
+                        withAnimation(.snappy) {
+                            isShowingLocationRationale = false
+                        }
+                    }
+
+                LocationPermissionRationaleCard(
                     status: locationManager.authorizationStatus,
-                    onRequestPermission: { locationManager.requestCurrentLocation() }
+                    onRequestPermission: requestMapLocation,
+                    onDismiss: dismissLocationRationale
                 )
                 .padding(32)
+                .transition(.scale(scale: 0.96).combined(with: .opacity))
             }
         }
     }
 
-    /// Show the prompt only when there's nothing to center on and location won't
-    /// arrive without user action (undetermined/denied). If authorized, a fix is
-    /// already on the way, so we stay quiet.
-    private var needsLocationPrompt: Bool {
-        locationManager.currentCoordinate == nil
-            && LocationManager.lastKnownCoordinate == nil
-            && locationManager.authorizationStatus != .authorizedWhenInUse
-            && locationManager.authorizationStatus != .authorizedAlways
+    private var isLocationAuthorized: Bool {
+        locationManager.authorizationStatus == .authorizedWhenInUse
+            || locationManager.authorizationStatus == .authorizedAlways
     }
 
     private var ornaments: OrnamentOptions {
@@ -162,10 +172,15 @@ struct MapboxIncidentMapView: View {
                         .font(.headline)
                         .foregroundStyle(.white)
                         .frame(width: 44, height: 44)
-                        .background(.black.opacity(0.42), in: Circle())
+                        .background(isFollowingUserLocation ? DS.Color.accent.opacity(0.86) : .black.opacity(0.42), in: Circle())
+                        .overlay(
+                            Circle()
+                                .stroke(.white.opacity(isFollowingUserLocation ? 0.32 : 0), lineWidth: 1)
+                        )
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("Go to my location")
+                .accessibilityLabel(isFollowingUserLocation ? "Stop following my heading" : "Follow my heading")
+                .accessibilityValue(isFollowingUserLocation ? "Following heading" : "Off")
             }
             .padding(.horizontal, 18)
             .padding(.top, 12)
@@ -288,8 +303,42 @@ struct MapboxIncidentMapView: View {
     }
 
     private func focusOnUserLocation() {
+        switch locationManager.authorizationStatus {
+        case .notDetermined, .denied, .restricted:
+            isFollowingUserLocation = false
+            withAnimation(.snappy) {
+                isShowingLocationRationale = true
+            }
+            return
+        case .authorizedAlways, .authorizedWhenInUse:
+            break
+        @unknown default:
+            withAnimation(.snappy) {
+                isShowingLocationRationale = true
+            }
+            return
+        }
+
+        isFollowingUserLocation.toggle()
         withAnimation(.snappy) {
-            viewport = .followPuck(zoom: 15.1, bearing: .heading, pitch: 44)
+            if isFollowingUserLocation {
+                viewport = .followPuck(zoom: 15.1, bearing: .heading, pitch: 44)
+            } else if let coordinate = locationManager.currentCoordinate ?? LocationManager.lastKnownCoordinate {
+                viewport = .camera(center: coordinate, zoom: 15.1, bearing: -18, pitch: 44)
+            } else {
+                viewport = .camera(center: MapDefaults.worldCenter, zoom: MapDefaults.worldMapboxZoom, bearing: 0, pitch: 0)
+            }
+        }
+    }
+
+    private func requestMapLocation() {
+        dismissLocationRationale()
+        locationManager.requestCurrentLocation()
+    }
+
+    private func dismissLocationRationale() {
+        withAnimation(.snappy) {
+            isShowingLocationRationale = false
         }
     }
 
@@ -370,7 +419,7 @@ private struct MapboxFeaturedIncident: View {
                     .foregroundStyle(.white)
                     .lineLimit(1)
 
-                Text("\(incident.confidence.rawValue) • \(incident.neighborhood)")
+                Text("\(incident.confidenceLabel) • \(incident.neighborhood)")
                     .font(DS.Font.caption())
                     .foregroundStyle(incident.confidence.color.opacity(0.92))
                     .lineLimit(1)

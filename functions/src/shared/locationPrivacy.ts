@@ -89,8 +89,15 @@ export async function publicLocationDecisionForIncident({
     return revealedDecision({ ...privacy, ...parent });
   }
 
+  const [previewLatitude, previewLongitude] = cellToLatLng(privacy.privateH3ParentCell);
+
   return {
     status: 'pending_k_anonymity',
+    latitude: previewLatitude,
+    longitude: previewLongitude,
+    geohash: encodeGeohash(previewLatitude, previewLongitude),
+    publicH3Cell: privacy.privateH3ParentCell,
+    publicH3Resolution: privacy.privateH3ParentResolution,
     ...privacy,
     distinctReporterCount: Math.max(exact.distinctReporterCount, parent.distinctReporterCount),
     existingReportIdsToReveal: [],
@@ -98,12 +105,16 @@ export async function publicLocationDecisionForIncident({
 }
 
 export function publicLocationFields(decision: PublicLocationDecision) {
+  const pendingPreview = decision.status === 'pending_k_anonymity'
+    ? pendingPreviewFields(decision)
+    : {};
   return withoutUndefined({
     latitude: decision.latitude,
     longitude: decision.longitude,
     geohash: decision.geohash,
     public_h3_cell: decision.publicH3Cell,
     public_h3_resolution: decision.publicH3Resolution,
+    ...pendingPreview,
     location_reveal_status: decision.status,
     location_privacy_policy: 'h3_k_anonymous',
     k_anonymity_threshold: decision.threshold,
@@ -171,6 +182,21 @@ async function revealCandidate({
     resolution,
     distinctReporterCount: reporterUids.size,
     existingReportIdsToReveal,
+  };
+}
+
+function pendingPreviewFields(decision: PublicLocationDecision) {
+  if (decision.latitude != null && decision.longitude != null && decision.publicH3Cell) {
+    return {};
+  }
+
+  const [latitude, longitude] = cellToLatLng(decision.privateH3ParentCell);
+  return {
+    latitude,
+    longitude,
+    geohash: encodeGeohash(latitude, longitude),
+    public_h3_cell: decision.privateH3ParentCell,
+    public_h3_resolution: decision.privateH3ParentResolution,
   };
 }
 

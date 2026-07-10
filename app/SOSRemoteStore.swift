@@ -38,6 +38,12 @@ final class SOSRemoteStore {
         _ = try await callFunction(named: "append_sos_location", data: payload)
     }
 
+    func fetchNotificationStatus(sessionID: String) async throws -> SOSNotificationStatus {
+        try await ensureSignedIn()
+        let result = try await callFunction(named: "get_sos_notification_status", data: ["session_id": sessionID])
+        return try SOSNotificationStatus(resultData: result.data)
+    }
+
     func resolveSOS(
         sessionID: String,
         resolution: SOSResolutionReason,
@@ -101,12 +107,110 @@ final class SOSRemoteStore {
 
     private func ensureSignedIn() async throws {
         if Auth.auth().currentUser != nil { return }
-        try await Auth.auth().signInAnonymously()
+        do {
+            try await Auth.auth().signInAnonymously()
+        } catch {
+            // App Check / anonymous-auth failures surface here, before any callable runs.
+            // Wrap them so the SOS panel can classify them instead of falling through to
+            // the generic "server returned an error" message.
+            throw SOSRemoteCallError(functionName: "auth.signInAnonymously", error: error as NSError)
+        }
     }
 
     private func callFunction(named name: String, data: [String: Any]) async throws -> HTTPSCallableResult {
-        try await functions.httpsCallable(name).call(data)
+        do {
+            return try await functions.httpsCallable(name).call(data)
+        } catch {
+            throw SOSRemoteCallError(functionName: name, error: error as NSError)
+        }
     }
+}
+
+/// Wraps a failed Cloud Functions call so the UI can show *why* an SOS upload failed
+/// (App Check, not-deployed, offline, server error) instead of one catch-all string.
+struct SOSRemoteCallError: LocalizedError {
+    enum Reason {
+        case appCheckOrAuth
+        case notDeployed
+        case offline
+        case server
+        case rateLimited
+        case unknown
+    }
+
+    let functionName: String
+    let reason: Reason
+    let underlying: NSError
+
+    init(functionName: String, error: NSError) {
+        self.functionName = functionName
+        self.underlying = error
+        self.reason = Self.classify(error)
+    }
+
+    private static func classify(_ error: NSError) -> Reason {
+        if error.domain == FunctionsErrorDomain, let code = FunctionsErrorCode(rawValue: error.code) {
+            switch code {
+            case .unauthenticated, .permissionDenied:
+                return .appCheckOrAuth
+            case .notFound, .unimplemented:
+                return .notDeployed
+            case .unavailable, .deadlineExceeded, .cancelled:
+                return .offline
+            case .resourceExhausted:
+                return .rateLimited
+            case .internal, .dataLoss, .aborted, .unknown:
+                return .server
+            default:
+                return .unknown
+            }
+        }
+        // App Check and Firebase Auth failures (e.g. unregistered debug token, App Attest
+        // misconfig, anonymous sign-in disabled) come through their own domains before any
+        // callable runs — treat them as a device-verification problem.
+        if error.domain.localizedCaseInsensitiveContains("appcheck")
+            || error.domain == "FIRAuthErrorDomain"
+            || error.domain == AuthErrorDomain {
+            return .appCheckOrAuth
+        }
+        if error.domain == NSURLErrorDomain {
+            return .offline
+        }
+        return .unknown
+    }
+
+    /// Short, calm, user-facing explanation shown on the SOS panel.
+    var userMessage: String {
+        switch reason {
+        case .appCheckOrAuth:
+            return "Couldn’t verify this device with the SOS server (App Check). Your location is saved on this device and will retry."
+        case .notDeployed:
+            return "The SOS service isn’t reachable for this app build. Your location is saved on this device."
+        case .offline:
+            return "You appear to be offline. Emergency updates are queued and will send automatically when you reconnect."
+        case .rateLimited:
+            return "Too many SOS attempts in a short time. Please wait a moment before trying again."
+        case .server, .unknown:
+            return "The SOS server returned an error. Your location is saved on this device and PulseTrackr will keep retrying."
+        }
+    }
+
+    /// Verbose detail for logs / DEBUG builds — domain, code, message.
+    var diagnosticMessage: String {
+        "[\(functionName)] \(underlying.domain) #\(underlying.code): \(underlying.localizedDescription)"
+    }
+
+    var isClosedSessionPrecondition: Bool {
+        guard underlying.domain == FunctionsErrorDomain,
+              let code = FunctionsErrorCode(rawValue: underlying.code),
+              code == .failedPrecondition || code == .notFound
+        else {
+            return false
+        }
+        return underlying.localizedDescription.localizedCaseInsensitiveContains("session")
+    }
+
+    var errorDescription: String? { userMessage }
 }
 
 struct SOSActivationPayload: Equatable {
@@ -301,6 +405,38 @@ struct SOSActivationResponse {
         self.appTrustedContactsNotified = body["app_trusted_contacts_notified"] as? [String] ?? []
         self.notificationSummary = SOSNotificationSummary(resultData: body["notification_summary"])
         self.expiresAt = SOSPayloadCoding.date(from: body["expires_at"])
+    }
+}
+
+struct SOSNotificationStatus {
+    var sessionID: String
+    var status: String
+    var sagaStatus: String
+    var trustedContactsNotified: [UUID]
+    var trustedContactsOptedOut: [UUID]
+    var appTrustedContactsNotified: [String]
+    var notificationSummary: SOSNotificationSummary
+
+    /// True once the backend notification saga has finished (or failed) so the client
+    /// can stop polling for delivery results.
+    var isSettled: Bool {
+        sagaStatus == "completed" || sagaStatus == "failed"
+    }
+
+    init(resultData: Any) throws {
+        guard let body = resultData as? [String: Any] else {
+            throw SOSRemoteStoreError.invalidResponse
+        }
+
+        self.sessionID = body["session_id"] as? String ?? ""
+        self.status = body["status"] as? String ?? "active"
+        self.sagaStatus = body["notification_saga_status"] as? String ?? "pending"
+        self.trustedContactsNotified = (body["trusted_contacts_notified"] as? [String] ?? [])
+            .compactMap(UUID.init(uuidString:))
+        self.trustedContactsOptedOut = (body["trusted_contacts_opted_out"] as? [String] ?? [])
+            .compactMap(UUID.init(uuidString:))
+        self.appTrustedContactsNotified = body["app_trusted_contacts_notified"] as? [String] ?? []
+        self.notificationSummary = SOSNotificationSummary(resultData: body["notification_summary"])
     }
 }
 

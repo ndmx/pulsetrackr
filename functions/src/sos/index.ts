@@ -12,7 +12,7 @@ import {
   translateErrors,
   retentionDate,
 } from '../shared/util';
-import { appendAuditToTransaction, logAudit } from '../shared/audit';
+import { appendAuditToTransaction, logAudit, prepareAuditAppend, writePreparedAudit } from '../shared/audit';
 import { decryptPrivateJson, encryptPrivateJson, privateLocationJson } from '../shared/envelope';
 import {
   HARD_LIMITS,
@@ -88,6 +88,20 @@ export const resolve_sos = onCall(callableOptions, async (request) => {
   return sosRepository.resolve({ uid, payload, now: new Date() });
 });
 
+// Lets the activating device read back only the delivery outcome of its own session
+// (summary + which contacts were notified / opted out). The full session document is
+// not client-readable because it holds unencrypted trusted-contact PII; this callable
+// is the safe, owner-scoped projection the iOS app polls so the SOS panel can show
+// real "alerted" status instead of staying on "ready" after the async task sends.
+export const get_sos_notification_status = onCall(callableOptions, async (request) => {
+  const uid = requireAuth(request);
+  const sessionId = cleanString(request.data?.session_id, 200);
+  if (!sessionId) {
+    throw new HttpsError('invalid-argument', 'session_id is required');
+  }
+  return sosRepository.notificationStatus({ uid, sessionId });
+});
+
 class SOSRepository {
   async activate({ uid, now, payload }: any) {
   const idempotencyKey = makeIdempotencyKey(uid, payload.clientSessionId);
@@ -120,10 +134,8 @@ class SOSRepository {
       };
     }
 
-    await applyActivationRateLimit(transaction, rateRef, now);
-
     const trustedContactsAccepted = payload.trustedContacts.map((contact: any) => contact.contactId);
-    await appendAuditToTransaction(transaction, {
+    const activationAudit = await prepareAuditAppend(transaction, {
       eventType: 'sos_activated',
       actorUid: uid,
       role: 'owner',
@@ -136,6 +148,9 @@ class SOSRepository {
       },
       deleteAfter,
     });
+
+    await applyActivationRateLimit(transaction, rateRef, now);
+    writePreparedAudit(transaction, activationAudit);
 
     transaction.set(sessionRef, {
       ownerUid: uid,
@@ -461,6 +476,27 @@ class SOSRepository {
   }
 
   return { accepted: result.accepted, duplicate: result.duplicate };
+  }
+
+  async notificationStatus({ uid, sessionId }: any) {
+  const sessionSnap = await db.collection('sos_sessions_private').doc(sessionId).get();
+  if (!sessionSnap.exists) {
+    throw new HttpsError('not-found', 'SOS session not found');
+  }
+  const session = sessionSnap.data() as any;
+  if (session.ownerUid !== uid) {
+    throw new HttpsError('permission-denied', 'Only the activating user can read this SOS session status');
+  }
+
+  return {
+    session_id: sessionId,
+    status: session.status || 'active',
+    notification_saga_status: session.notificationSagaStatus || 'pending',
+    trusted_contacts_notified: session.trustedContactsNotified || [],
+    trusted_contacts_opted_out: session.trustedContactsOptedOut || [],
+    app_trusted_contacts_notified: session.appTrustedContactsNotified || [],
+    notification_summary: session.notificationSummary || { queued: 0, sent: 0, failed: 0, skipped: 0, optedOut: 0 },
+  };
   }
 
   async resolve({ uid, payload, now }: any) {

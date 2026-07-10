@@ -32,8 +32,11 @@ test('incident H3 privacy metadata is deterministic and k-anonymous by default',
   });
   assert.equal(fields.location_reveal_status, 'pending_k_anonymity');
   assert.equal(fields.location_privacy_policy, 'h3_k_anonymous');
-  assert.equal(fields.latitude, undefined);
-  assert.equal(fields.geohash, undefined);
+  assert.equal(typeof fields.latitude, 'number');
+  assert.equal(typeof fields.longitude, 'number');
+  assert.equal(typeof fields.geohash, 'string');
+  assert.equal(fields.public_h3_cell, first.privateH3ParentCell);
+  assert.equal(fields.public_h3_resolution, first.privateH3ParentResolution);
 });
 
 test('envelope encryption round-trips only with matching authenticated context', () => {

@@ -790,7 +790,7 @@ struct IncidentStoreTests {
         #expect(added.subtype.category == .fire)
     }
 
-    @Test @MainActor func addIncidentKeepsPublicCoordinateNilUntilBackendReveal() {
+    @Test @MainActor func addIncidentUsesApproximateLocalCoordinateForVisibility() {
         let store = IncidentStore()
         let exact = CLLocationCoordinate2D(latitude: 6.5244, longitude: 3.3792)
         store.addIncident(
@@ -805,7 +805,32 @@ struct IncidentStoreTests {
         let added = store.incidents.last!
         #expect(added.reporterCoordinate?.latitude == exact.latitude)
         #expect(added.reporterCoordinate?.longitude == exact.longitude)
-        #expect(added.coordinate == nil)
+        #expect(added.coordinate != nil)
+        #expect(added.coordinate?.latitude != exact.latitude)
+        #expect(added.coordinate?.longitude != exact.longitude)
+        #expect(exact.distance(to: added.coordinate!) < 500)
+    }
+
+    @Test @MainActor func addIncidentIsVisibleInNearbyFeedBeforeRemoteReveal() {
+        let store = IncidentStore()
+        let exact = CLLocationCoordinate2D(latitude: 6.5244, longitude: 3.3792)
+        store.addIncident(
+            title: "Local visibility test",
+            summary: "A locally submitted report should show right away.",
+            category: .community,
+            subtype: .localWarning,
+            severity: .low,
+            neighborhood: "Test",
+            reporterCoordinate: exact
+        )
+
+        let visible = store.nearbyIncidents(
+            urgentAlerts: true,
+            communityAlerts: true,
+            watchRadius: 3,
+            near: exact
+        )
+        #expect(visible.contains { $0.title == "Local visibility test" })
     }
 
     // MARK: incident(withID:)

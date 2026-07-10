@@ -50,49 +50,79 @@ struct CategoryChip: View {
 
 // MARK: - Location prompt
 
-/// Region-neutral prompt shown when the app has no location to center on. Avoids
-/// dropping users into an arbitrary city when location is undetermined or denied.
-struct LocationPromptCard: View {
+/// Moment-of-need rationale shown before the system location permission prompt.
+struct LocationPermissionRationaleCard: View {
     var status: CLAuthorizationStatus
-    /// Called for `.notDetermined` to trigger the system permission request.
     var onRequestPermission: () -> Void
+    var onDismiss: () -> Void
     @Environment(\.openURL) private var openURL
 
     var body: some View {
-        VStack(spacing: DS.Space.md) {
-            Image(systemName: "location.slash.fill")
+        VStack(spacing: DS.Space.lg) {
+            Image(systemName: iconName)
                 .font(.title2)
-                .foregroundStyle(DS.Color.textSecondary)
-            Text("See incidents near you")
-                .font(DS.Font.cardTitle())
-                .foregroundStyle(DS.Color.textPrimary)
-            Text(message)
-                .font(DS.Font.body())
-                .multilineTextAlignment(.center)
-                .foregroundStyle(DS.Color.textSecondary)
+                .foregroundStyle(DS.Color.accent)
+                .frame(width: 48, height: 48)
+                .background(DS.Color.accent.opacity(0.14), in: Circle())
+
+            VStack(spacing: DS.Space.sm) {
+                Text(title)
+                    .font(DS.Font.cardTitle())
+                    .foregroundStyle(DS.Color.textPrimary)
+                    .multilineTextAlignment(.center)
+                Text(message)
+                    .font(DS.Font.body())
+                    .multilineTextAlignment(.center)
+                    .foregroundStyle(DS.Color.textSecondary)
+            }
+
             Button(action: primaryAction) {
                 Text(buttonTitle)
             }
+            .buttonStyle(DSPrimaryButtonStyle())
+
+            Button(action: onDismiss) {
+                Text(secondaryButtonTitle)
+            }
             .buttonStyle(DSSecondaryButtonStyle())
-            .padding(.top, DS.Space.xs)
         }
         .pulsePanel()
     }
 
-    // LocalizedStringKey (not String) so Text(_:) localizes via the String Catalog.
+    private var iconName: String {
+        switch status {
+        case .denied, .restricted: "location.slash.fill"
+        default: "location.fill.viewfinder"
+        }
+    }
+
+    private var title: LocalizedStringKey {
+        switch status {
+        case .denied, .restricted: "Location access is off"
+        default: "Use your location on the map"
+        }
+    }
+
     private var message: LocalizedStringKey {
         switch status {
         case .denied, .restricted:
-            "Location access is off, so the map can't show what's happening around you. Turn it on in Settings."
+            "Turn on location in Settings when you want PulseTrackr to center the map on you and show nearby reports."
         default:
-            "PulseTrackr uses your location to center the map and show nearby incidents in your watch area."
+            "PulseTrackr uses your location to center the map on you and show nearby reports in your watch area. You can keep browsing without sharing it."
         }
     }
 
     private var buttonTitle: LocalizedStringKey {
         switch status {
         case .denied, .restricted: "Open Settings"
-        default: "Enable location"
+        default: "Continue"
+        }
+    }
+
+    private var secondaryButtonTitle: LocalizedStringKey {
+        switch status {
+        case .denied, .restricted: "Keep browsing"
+        default: "Not now"
         }
     }
 
@@ -105,5 +135,20 @@ struct LocationPromptCard: View {
         default:
             onRequestPermission()
         }
+    }
+}
+
+/// Compatibility wrapper for older call sites that still expect the previous
+/// location prompt name.
+struct LocationPromptCard: View {
+    var status: CLAuthorizationStatus
+    var onRequestPermission: () -> Void
+
+    var body: some View {
+        LocationPermissionRationaleCard(
+            status: status,
+            onRequestPermission: onRequestPermission,
+            onDismiss: {}
+        )
     }
 }

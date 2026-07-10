@@ -28,6 +28,7 @@ final class IncidentStore: ObservableObject {
     private let resubscribeDistanceMeters: CLLocationDistance = 500
     private let outbox: OutboxQueue
     private var isDrainingOutbox = false
+    private var locallySubmittedIncidentIDs: Set<UUID> = []
 
     init(
         remoteStore: SafetyIncidentRemoteStore? = SafetyIncidentRemoteStore.makeIfConfigured(),
@@ -144,7 +145,8 @@ final class IncidentStore: ObservableObject {
             severity: severity,
             status: status,
             reporterCoordinate: reporterCoordinate,
-            coordinate: nil,
+            coordinate: Self.localApproximateCoordinate(from: reporterCoordinate),
+            locationRevealStatus: reporterCoordinate == nil ? nil : .pendingKAnonymity,
             neighborhood: neighborhood.isEmpty ? "Nearby area" : neighborhood,
             reportedAt: Date(),
             confirmations: 1,
@@ -154,6 +156,7 @@ final class IncidentStore: ObservableObject {
         )
         // Append (O(1) amortised) keeps all existing indices stable in the lookup.
         objectWillChange.send()
+        locallySubmittedIncidentIDs.insert(incident.id)
         lookup[incident.id] = incidents.count
         incidents.append(incident)
         refreshActiveIncidents()
@@ -255,14 +258,40 @@ final class IncidentStore: ObservableObject {
 
     private func replaceIncidents(_ remoteIncidents: [Incident]) {
         objectWillChange.send()
-        incidents = remoteIncidents
+        let remoteIDs = Set(remoteIncidents.map(\.id))
+        let remoteDocumentIDs = Set(remoteIncidents.compactMap(\.remoteDocumentID))
+        let localIncidentsNotYetInRemoteFeed = incidents.filter { incident in
+            guard locallySubmittedIncidentIDs.contains(incident.id),
+                  remoteIDs.contains(incident.id) == false else { return false }
+            if let remoteDocumentID = incident.remoteDocumentID {
+                return remoteDocumentIDs.contains(remoteDocumentID) == false
+            }
+            return true
+        }
+        incidents = remoteIncidents + localIncidentsNotYetInRemoteFeed
         rebuildLookup()
         refreshActiveIncidents()
     }
 
     private func attachRemoteDocumentID(_ remoteID: String, toIncidentWithID id: UUID) {
         guard let index = lookup[id] else { return }
+        objectWillChange.send()
         incidents[index].remoteDocumentID = remoteID
+    }
+
+    /// Local-only display coordinate for the reporter's own just-submitted report.
+    /// The exact reporter coordinate remains private; the server remains the source of
+    /// truth for public H3 disclosure once the remote incident is eligible.
+    private static func localApproximateCoordinate(from coordinate: CLLocationCoordinate2D?) -> CLLocationCoordinate2D? {
+        guard let coordinate, coordinate.isValid else { return nil }
+        let gridDegrees = 0.004
+        let latitude = ((coordinate.latitude / gridDegrees).rounded(.down) + 0.5) * gridDegrees
+        let longitude = ((coordinate.longitude / gridDegrees).rounded(.down) + 0.5) * gridDegrees
+        let approximate = CLLocationCoordinate2D(
+            latitude: min(max(latitude, -90), 90),
+            longitude: min(max(longitude, -180), 180)
+        )
+        return approximate.isValid ? approximate : nil
     }
 
     func retryPendingOutbox() {
