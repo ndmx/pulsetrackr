@@ -39,6 +39,8 @@ test('raw SOS/private collections deny normal client access', async () => {
   const db = testEnv.authenticatedContext('user-1').firestore();
   const privatePaths = [
     'safety_reports_private/report-1',
+    'safety_incident_signal_voters_private/incident-1_user-1',
+    'reporter_reputation_private/user-1',
     'safety_incident_counter_shards_private/incident-1_confirmations_00',
     'safety_incident_counter_rollup_queue_private/incident-1',
     'safety_incident_counter_rollups_private/incident-1',
