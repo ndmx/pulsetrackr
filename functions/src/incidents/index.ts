@@ -60,6 +60,7 @@ const COUNTER_FIELDS = Object.freeze([
 ]);
 const COUNTER_SHARD_COUNT = 16;
 const COUNTER_ROLLUP_LIMIT = 250;
+const DAY_MS = 24 * 60 * 60 * 1000;
 const CRITICAL_PUBLIC_ALERT_CATEGORIES = new Set(['security', 'fire', 'medical', 'structure']);
 const CRITICAL_PUBLIC_ALERT_SUBTYPES = new Set([
   'armed_robbery',
@@ -115,6 +116,7 @@ export const record_incident_signal = onCall(callableOptions, async (request) =>
     status: result.status,
     severity: result.severity,
     applied: result.applied,
+    ...('reason' in result ? { reason: result.reason } : {}),
   };
 });
 
@@ -143,15 +145,23 @@ export const query_incidents_h3 = onCall(callableOptions, async (request) => {
 });
 
 class IncidentRepository {
-  async submitIncident({ uid, now, payload }: { uid: string; now: Date; payload: any }) {
-    const privateRef = db.collection('safety_reports_private').doc();
-    const reportsCollection = db.collection('safety_reports_private');
-    const publicCollection = db.collection('safety_incidents_public');
-    const publicRef = publicCollection.doc(privateRef.id);
-    const rateRef = feedRateLimitRef(uid, 'submit');
+  private readonly database: any;
 
-    await db.runTransaction(async (transaction) => {
-      await enforceRateLimit(transaction, rateRef, now, SUBMISSION_RATE_LIMIT);
+  constructor(database: any = db) {
+    this.database = database;
+  }
+
+  async submitIncident({ uid, now, payload }: { uid: string; now: Date; payload: any }) {
+    const privateRef = this.database.collection('safety_reports_private').doc();
+    const reportsCollection = this.database.collection('safety_reports_private');
+    const publicCollection = this.database.collection('safety_incidents_public');
+    const publicRef = publicCollection.doc(privateRef.id);
+    const rateRef = feedRateLimitRef(uid, 'submit', this.database);
+    const reputationRef = this.database.collection('reporter_reputation_private').doc(uid);
+
+    await this.database.runTransaction(async (transaction: any) => {
+      const applyRateLimit = await prepareRateLimitUpdate(transaction, rateRef, now, SUBMISSION_RATE_LIMIT);
+      const reputationSnapshot = await transaction.get(reputationRef);
       const locationDecision = await publicLocationDecisionForIncident({
         transaction,
         reportsCollection,
@@ -160,7 +170,9 @@ class IncidentRepository {
         latitude: payload.latitude,
         longitude: payload.longitude,
       });
+      const reporterTrustTier = reporterTrustTierFromSnapshot(reputationSnapshot);
 
+      applyRateLimit();
       transaction.set(privateRef, withoutUndefined({
         ownerUid: uid,
         clientRef: payload.clientRef,
@@ -207,8 +219,10 @@ class IncidentRepository {
         updated_at: FieldValue.serverTimestamp(),
         deleteAfter: Timestamp.fromDate(publicIncidentDeleteAfter(now, payload)),
         source: payload.source,
+        reporter_trust_tier: reporterTrustTier,
       }));
       incrementCounterShard(transaction, {
+        database: this.database,
         incidentId: publicRef.id,
         counterField: 'confirmations',
         now,
@@ -224,18 +238,31 @@ class IncidentRepository {
   }
 
   async recordSignal({ uid, now, incidentId, signal }: { uid: string; now: Date; incidentId: string; signal: string }) {
-    const publicRef = db.collection('safety_incidents_public').doc(incidentId);
-    const rateRef = feedRateLimitRef(uid, 'signal');
+    const publicRef = this.database.collection('safety_incidents_public').doc(incidentId);
+    const rateRef = feedRateLimitRef(uid, 'signal', this.database);
+    const voterRef = this.database.collection('safety_incident_signal_voters_private')
+      .doc(`${incidentId}_${uid}`);
 
-    return db.runTransaction(async (transaction) => {
+    return this.database.runTransaction(async (transaction: any) => {
       const snapshot = await transaction.get(publicRef);
       if (!snapshot.exists) {
         throw new HttpsError('not-found', 'Incident not found');
       }
-      await enforceRateLimit(transaction, rateRef, now, SIGNAL_RATE_LIMIT);
+      const voterSnapshot = await transaction.get(voterRef);
 
       const incident = snapshot.data() as any;
+      if (voterSnapshot.exists) {
+        return {
+          status: incident.status,
+          severity: incident.severity,
+          applied: false,
+          reason: 'already_signaled',
+        };
+      }
+
+      const applyRateLimit = await prepareRateLimitUpdate(transaction, rateRef, now, SIGNAL_RATE_LIMIT);
       if (incident.status === 'Resolved') {
+        applyRateLimit();
         return { status: incident.status, severity: incident.severity, applied: false };
       }
 
@@ -243,7 +270,7 @@ class IncidentRepository {
         'confirmations',
         'disputes',
         'cleared_reports',
-      ]);
+      ], this.database);
       const derived = deriveSignalOutcome(signal, {
         ...incident,
         ...counterTotals,
@@ -253,6 +280,15 @@ class IncidentRepository {
         status: derived.status,
         severity: derived.severity,
       });
+      const voterDeleteAfter = signalVoterDeleteAfter(now, incident.deleteAfter);
+      applyRateLimit();
+      transaction.create(voterRef, {
+        incidentId,
+        uid,
+        signal,
+        createdAt: FieldValue.serverTimestamp(),
+        deleteAfter: Timestamp.fromDate(voterDeleteAfter),
+      });
       transaction.update(publicRef, withoutUndefined({
         status: derived.status,
         severity: derived.severity,
@@ -260,6 +296,7 @@ class IncidentRepository {
         deleteAfter: Timestamp.fromDate(deleteAfter),
       }));
       incrementCounterShard(transaction, {
+        database: this.database,
         incidentId,
         counterField: SIGNAL_COUNTER_FIELD[signal],
         now,
@@ -271,7 +308,7 @@ class IncidentRepository {
   }
 
   async rollupQueuedCounters(now: Date) {
-    const queueSnapshot = await db.collection('safety_incident_counter_rollup_queue_private')
+    const queueSnapshot = await this.database.collection('safety_incident_counter_rollup_queue_private')
       .orderBy('updatedAt', 'asc')
       .limit(COUNTER_ROLLUP_LIMIT)
       .get();
@@ -280,13 +317,13 @@ class IncidentRepository {
     let rolledUp = 0;
     for (const queueDoc of queueSnapshot.docs) {
       const incidentId = queueDoc.id;
-      const shardSnapshot = await db.collection('safety_incident_counter_shards_private')
+      const shardSnapshot = await this.database.collection('safety_incident_counter_shards_private')
         .where('incidentId', '==', incidentId)
         .get();
       const totals = counterTotalsFromShardDocs(shardSnapshot.docs);
-      const batch = db.batch();
-      const publicRef = db.collection('safety_incidents_public').doc(incidentId);
-      const rollupRef = db.collection('safety_incident_counter_rollups_private').doc(incidentId);
+      const batch = this.database.batch();
+      const publicRef = this.database.collection('safety_incidents_public').doc(incidentId);
+      const rollupRef = this.database.collection('safety_incident_counter_rollups_private').doc(incidentId);
       batch.set(publicRef, {
         ...totals,
         countersRolledUpAt: FieldValue.serverTimestamp(),
@@ -311,7 +348,7 @@ class IncidentRepository {
     const incidents = new Map<string, any>();
 
     for (const chunk of chunks(cells, 30)) {
-      const snapshot = await db.collection('safety_incidents_public')
+      const snapshot = await this.database.collection('safety_incidents_public')
         .where('public_h3_cell', 'in', chunk)
         .where('deleteAfter', '>', Timestamp.fromDate(now))
         .limit(limit)
@@ -338,13 +375,16 @@ class IncidentRepository {
 
 incidentRepository = new IncidentRepository();
 
-function feedRateLimitRef(uid: string, action: string) {
-  return db.collection('safety_feed_rate_limits_private').doc(`${uid}_${action}`);
+function feedRateLimitRef(uid: string, action: string, database: any = db) {
+  return database.collection('safety_feed_rate_limits_private').doc(`${uid}_${action}`);
 }
 
-function incrementCounterShard(transaction: any, { incidentId, counterField, now, deleteAfter }: any): void {
+function incrementCounterShard(
+  transaction: any,
+  { database = db, incidentId, counterField, now, deleteAfter }: any,
+): void {
   const shard = Math.floor(Math.random() * COUNTER_SHARD_COUNT);
-  const shardRef = counterShardRef(incidentId, counterField, shard);
+  const shardRef = counterShardRef(incidentId, counterField, shard, database);
   transaction.set(shardRef, {
     incidentId,
     counterField,
@@ -353,25 +393,30 @@ function incrementCounterShard(transaction: any, { incidentId, counterField, now
     updatedAt: FieldValue.serverTimestamp(),
     deleteAfter: Timestamp.fromDate(deleteAfter),
   }, { merge: true });
-  transaction.set(db.collection('safety_incident_counter_rollup_queue_private').doc(incidentId), {
+  transaction.set(database.collection('safety_incident_counter_rollup_queue_private').doc(incidentId), {
     incidentId,
     updatedAt: FieldValue.serverTimestamp(),
     deleteAfter: Timestamp.fromDate(deleteAfter),
   }, { merge: true });
 }
 
-function counterShardRef(incidentId: string, counterField: string, shard: number) {
-  return db.collection('safety_incident_counter_shards_private')
+function counterShardRef(incidentId: string, counterField: string, shard: number, database: any = db) {
+  return database.collection('safety_incident_counter_shards_private')
     .doc(`${incidentId}_${counterField}_${String(shard).padStart(2, '0')}`);
 }
 
-async function counterTotalsForIncident(transaction: any, incidentId: string, fields: string[]) {
+async function counterTotalsForIncident(
+  transaction: any,
+  incidentId: string,
+  fields: string[],
+  database: any = db,
+) {
   const totals: Record<string, number> = {};
   for (const counterField of fields) {
     totals[counterField] = 0;
   }
   const snapshot = await transaction.get(
-    db.collection('safety_incident_counter_shards_private')
+    database.collection('safety_incident_counter_shards_private')
       .where('incidentId', '==', incidentId),
   );
   for (const doc of snapshot.docs || []) {
@@ -418,6 +463,7 @@ function publicIncidentResponse(data: any) {
     blocked_reports: numberOr(data.blocked_reports, 0),
     cleared_reports: numberOr(data.cleared_reports, 0),
     official_updates: numberOr(data.official_updates, 0),
+    reporter_trust_tier: data.reporter_trust_tier,
     reported_at: timestampToDate(data.reported_at)?.toISOString(),
     updated_at: timestampToDate(data.updated_at)?.toISOString(),
   });
@@ -431,9 +477,32 @@ function chunks<T>(values: T[], size: number): T[][] {
   return result;
 }
 
+function reporterTrustTierFromSnapshot(snapshot: any): 'standard' | 'trusted' {
+  const tier = snapshot.exists ? snapshot.data()?.tier : undefined;
+  return tier === 'trusted' ? 'trusted' : 'standard';
+}
+
+function signalVoterDeleteAfter(now: Date, publicDeleteAfter: any): Date {
+  const publicDeleteAfterDate = timestampToDate(publicDeleteAfter);
+  if (publicDeleteAfterDate) {
+    return new Date(publicDeleteAfterDate.getTime() + 35 * DAY_MS);
+  }
+  return new Date(now.getTime() + 60 * DAY_MS);
+}
+
 // Sliding-window + cooldown limiter. Must be called before any writes in the
 // enclosing transaction (it issues a read), and persists the updated window.
 async function enforceRateLimit(transaction: any, rateRef: any, now: Date, limit: any): Promise<void> {
+  const applyRateLimit = await prepareRateLimitUpdate(transaction, rateRef, now, limit);
+  applyRateLimit();
+}
+
+async function prepareRateLimitUpdate(
+  transaction: any,
+  rateRef: any,
+  now: Date,
+  limit: any,
+): Promise<() => void> {
   const snap = await transaction.get(rateRef);
   const windowStartsAt = new Date(now.getTime() - limit.windowSeconds * 1000);
   const recentEvents = snap.exists
@@ -451,11 +520,13 @@ async function enforceRateLimit(transaction: any, rateRef: any, now: Date, limit
   }
 
   recentEvents.push(now);
-  transaction.set(rateRef, {
-    recentEvents: recentEvents.map((date: Date) => Timestamp.fromDate(date)),
-    updatedAt: FieldValue.serverTimestamp(),
-    deleteAfter: Timestamp.fromDate(retentionDate(now)),
-  }, { merge: true });
+  return () => {
+    transaction.set(rateRef, {
+      recentEvents: recentEvents.map((date: Date) => Timestamp.fromDate(date)),
+      updatedAt: FieldValue.serverTimestamp(),
+      deleteAfter: Timestamp.fromDate(retentionDate(now)),
+    }, { merge: true });
+  };
 }
 
 // Server-authoritative port of the iOS IncidentStore signal rules. Counters are
@@ -619,6 +690,7 @@ function isCriticalPublicAlert(incident: any): boolean {
 
 // Test-only surface (mirrors the original index.js __test export).
 export const __test = {
+  IncidentRepository,
   publicIncidentCoordinate,
   sanitizeIncidentPayload,
   publicIncidentDeleteAfter,
@@ -627,4 +699,5 @@ export const __test = {
   deriveSignalOutcome,
   SIGNAL_COUNTER_FIELD,
   counterTotalsFromShardDocs,
+  signalVoterDeleteAfter,
 };

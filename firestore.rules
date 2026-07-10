@@ -29,6 +29,14 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    match /safety_incident_signal_voters_private/{voterId} {
+      allow read, write: if false;
+    }
+
+    match /reporter_reputation_private/{reporterId} {
+      allow read, write: if false;
+    }
+
     match /safety_feed_rate_limits_private/{rateLimitId} {
       allow read, write: if false;
     }
