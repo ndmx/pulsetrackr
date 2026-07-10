@@ -104,8 +104,10 @@ class PushRepository {
 
     let oldTopics: string[] = [];
     await db.runTransaction(async (transaction) => {
-      await enforceRateLimit(transaction, rateRef, now, PUSH_REGISTER_RATE_LIMIT);
+      // Firestore requires every read to precede the first write; the limiter
+      // writes its window doc, so the device snapshot must be read first.
       const snapshot = await transaction.get(deviceRef);
+      await enforceRateLimit(transaction, rateRef, now, PUSH_REGISTER_RATE_LIMIT);
       oldTopics = snapshot.exists ? stringArray(snapshot.data()?.subscribed_topics) : [];
 
       const record = registryRecordForDevice({ uid, payload, subscribedTopics: newTopics });
@@ -313,9 +315,10 @@ function candidateAlertKindsForPublicWrite(before: any, after: any): AlertKind[]
 
   const alertKinds: AlertKind[] = [];
   if (isRevealTransition(before, after)) {
+    // The reveal push already announces the incident at its current severity;
+    // escalation is reserved for later upgrades of an already-revealed doc.
     alertKinds.push('reveal');
-  }
-  if (isEscalationTransition(before, after)) {
+  } else if (isEscalationTransition(before, after)) {
     alertKinds.push('escalation');
   }
   return alertKinds;

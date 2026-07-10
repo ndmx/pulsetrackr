@@ -60,10 +60,20 @@ test('transition matrix sends reveal and escalation alerts only for qualifying c
   );
 });
 
-test('created already revealed high-severity incidents qualify for both alert types before marker filtering', () => {
+test('created already revealed high-severity incidents fire a single reveal alert (no double push)', () => {
   assert.deepEqual(
     __test.candidateAlertKindsForPublicWrite(null, { ...baseIncident, severity: 'High' }),
-    ['reveal', 'escalation'],
+    ['reveal'],
+  );
+});
+
+test('escalation still fires when a previously revealed incident is upgraded', () => {
+  assert.deepEqual(
+    __test.candidateAlertKindsForPublicWrite(
+      { ...baseIncident, severity: 'Medium' },
+      { ...baseIncident, severity: 'High' },
+    ),
+    ['escalation'],
   );
 });
 
