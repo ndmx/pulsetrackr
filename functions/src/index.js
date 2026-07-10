@@ -53,6 +53,7 @@ exports.processIncidentAlerts = push.processIncidentAlerts;
 if (process.env.NODE_ENV === 'test') {
   exports.__test = {
     ...incidents.__test,
+    ...sos.__test,
     ...moderation.__test,
     ...push.__test,
   };

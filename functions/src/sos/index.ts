@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { logger } from 'firebase-functions';
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
 import { db, FieldValue, Timestamp } from '../shared/admin';
 import { callableOptions } from '../shared/config';
@@ -23,10 +24,24 @@ import {
   sanitizeLocationUpdatePayload,
   sanitizeResolutionPayload,
 } from '../sosShared';
-import { enqueueSosNotificationTask } from '../notifications';
+import { appAlertPayload, enqueueSosNotificationTask } from '../notifications';
+import { sendFcmPush } from '../notificationProviders';
 
 const APP_TRUSTED_CONTACT_INVITE_TTL_SECONDS = 3 * 24 * 60 * 60;
 const APP_TRUSTED_CONTACT_ALERT_LIMIT = 10;
+const ESCORT_SESSION_EXPIRY_SECONDS = 4 * 60 * 60;
+const ESCORT_RATE_LIMITS = Object.freeze({
+  activationCooldownSeconds: 30,
+  activationWindowSeconds: 60 * 60,
+  activationWindowLimit: 10,
+});
+
+const defaultSOSDependencies = {
+  db,
+  enqueueSosNotificationTask,
+  sendFcmPush,
+  logger,
+};
 
 let sosRepository: SOSRepository;
 
@@ -103,30 +118,46 @@ export const get_sos_notification_status = onCall(callableOptions, async (reques
 });
 
 class SOSRepository {
+  private readonly database: typeof db;
+  private readonly enqueueNotifications: typeof enqueueSosNotificationTask;
+  private readonly pushSender: typeof sendFcmPush;
+  private readonly log: typeof logger;
+
+  constructor(dependencies: any = defaultSOSDependencies) {
+    this.database = dependencies.db;
+    this.enqueueNotifications = dependencies.enqueueSosNotificationTask || dependencies.enqueueNotifications;
+    this.pushSender = dependencies.sendFcmPush || dependencies.pushSender;
+    this.log = dependencies.logger || dependencies.log || logger;
+  }
+
   async activate({ uid, now, payload }: any) {
   const idempotencyKey = makeIdempotencyKey(uid, payload.clientSessionId);
-  const idempotencyRef = db.collection('sos_idempotency_private').doc(idempotencyKey);
-  const rateRef = db.collection('sos_rate_limits_private').doc(uid);
-  const sessionRef = db.collection('sos_sessions_private').doc();
-  const expiresAt = new Date(now.getTime() + payload.privacy.adminAccessExpiresAfterSeconds * 1000);
+  const idempotencyRef = this.database.collection('sos_idempotency_private').doc(idempotencyKey);
+  const rateRef = this.database.collection('sos_rate_limits_private')
+    .doc(payload.sessionKind === 'escort' ? `${uid}_escort` : uid);
+  const sessionRef = this.database.collection('sos_sessions_private').doc();
+  const expiresAt = new Date(now.getTime() + sessionExpirySeconds(payload) * 1000);
   const deleteAfter = retentionDate(now);
 
-  const transactionResult = await db.runTransaction(async (transaction): Promise<any> => {
+  const transactionResult = await this.database.runTransaction(async (transaction): Promise<any> => {
     const existing = await transaction.get(idempotencyRef);
     if (existing.exists) {
       const data = existing.data() as any;
-      const sessionSnap = await transaction.get(db.collection('sos_sessions_private').doc(data.sessionId));
+      const sessionSnap = await transaction.get(this.database.collection('sos_sessions_private').doc(data.sessionId));
       const session: any = sessionSnap.exists ? sessionSnap.data() : {};
       const sagaStatus = session.notificationSagaStatus;
+      const kind = session.kind || 'sos';
       return {
         alreadyExisted: true,
         sessionId: data.sessionId,
+        kind,
+        escortRelationshipId: session.escortRelationshipId,
         trustedContactsNotified: session.trustedContactsNotified || [],
         trustedContactsOptedOut: session.trustedContactsOptedOut || [],
         appTrustedContactsNotified: session.appTrustedContactsNotified || [],
         notificationSummary: session.notificationSummary || { queued: 0, sent: 0, failed: 0, skipped: 0, optedOut: 0 },
         expiresAt: data.expiresAt.toDate(),
-        shouldEnqueueNotification: !sagaStatus || sagaStatus === 'failed',
+        shouldEnqueueNotification: kind === 'sos' && (!sagaStatus || sagaStatus === 'failed'),
         contacts: session.trustedContacts || [],
         location: plaintextSessionLocation(session, data.sessionId),
         directionOfTravel: session.directionOfTravel,
@@ -134,6 +165,9 @@ class SOSRepository {
       };
     }
 
+    const escortRelationship = payload.sessionKind === 'escort'
+      ? await loadValidatedEscortRelationship(transaction, this.database, payload.escortRelationshipId, uid)
+      : null;
     const trustedContactsAccepted = payload.trustedContacts.map((contact: any) => contact.contactId);
     const activationAudit = await prepareAuditAppend(transaction, {
       eventType: 'sos_activated',
@@ -142,17 +176,21 @@ class SOSRepository {
       sessionId: sessionRef.id,
       decision: 'allowed',
       reason: 'user_activated_sos',
-      redacted: {
+      redacted: withoutUndefined({
+        kind: payload.sessionKind,
+        escortRelationshipId: payload.sessionKind === 'escort' ? payload.escortRelationshipId : undefined,
         trustedContactCount: payload.trustedContacts.length,
         recentTrailCount: payload.recentTrail.length,
-      },
+      }),
       deleteAfter,
-    });
+    }, this.database);
 
-    await applyActivationRateLimit(transaction, rateRef, now);
+    await applyActivationRateLimit(transaction, rateRef, now, activationRateLimits(payload.sessionKind));
     writePreparedAudit(transaction, activationAudit);
 
-    transaction.set(sessionRef, {
+    transaction.set(sessionRef, withoutUndefined({
+      kind: payload.sessionKind,
+      escortRelationshipId: payload.sessionKind === 'escort' ? payload.escortRelationshipId : undefined,
       ownerUid: uid,
       clientSessionId: payload.clientSessionId,
       status: 'active',
@@ -180,38 +218,58 @@ class SOSRepository {
       trustedContactsAccepted,
       trustedContactsNotified: [],
       trustedContactsOptedOut: [],
+      appTrustedContactsNotified: escortRelationship ? [escortRelationship.id] : [],
       notificationSummary: {
-        queued: trustedContactsAccepted.length,
+        queued: payload.sessionKind === 'escort' ? 0 : trustedContactsAccepted.length,
         sent: 0,
         failed: 0,
         skipped: 0,
         optedOut: 0,
       },
+      notificationSagaStatus: payload.sessionKind === 'escort' ? 'not_applicable' : undefined,
       device: payload.device,
       privacy: payload.privacy,
       createdAt: FieldValue.serverTimestamp(),
       updatedAt: FieldValue.serverTimestamp(),
       lastLocationAt: Timestamp.fromDate(payload.lastKnownLocation.capturedAt),
-    });
+    }));
 
-    transaction.set(idempotencyRef, {
+    transaction.set(idempotencyRef, withoutUndefined({
       uid,
       clientSessionId: payload.clientSessionId,
       sessionId: sessionRef.id,
       trustedContactsAccepted,
+      kind: payload.sessionKind,
+      escortRelationshipId: payload.sessionKind === 'escort' ? payload.escortRelationshipId : undefined,
       expiresAt: Timestamp.fromDate(expiresAt),
       createdAt: FieldValue.serverTimestamp(),
       deleteAfter: Timestamp.fromDate(deleteAfter),
-    });
+    }));
+
+    if (escortRelationship) {
+      transaction.set(appAlertRefForDb(this.database, sessionRef.id, escortRelationship.id), appAlertPayload({
+        sessionId: sessionRef.id,
+        relationship: escortRelationship,
+        location: payload.lastKnownLocation,
+        directionOfTravel: payload.directionOfTravel,
+        status: 'active',
+        deleteAfter,
+        kind: 'escort',
+      }), { merge: true });
+    }
 
     return {
       alreadyExisted: false,
       sessionId: sessionRef.id,
+      kind: payload.sessionKind,
+      escortRelationshipId: payload.sessionKind === 'escort' ? payload.escortRelationshipId : undefined,
+      escortRelationship,
       expiresAt,
       contacts: payload.trustedContacts,
       location: payload.lastKnownLocation,
       directionOfTravel: payload.directionOfTravel,
       deleteAfter,
+      appTrustedContactsNotified: escortRelationship ? [escortRelationship.id] : [],
     };
   });
 
@@ -219,8 +277,15 @@ class SOSRepository {
   const trustedContactsNotified = transactionResult.trustedContactsNotified || [];
   const trustedContactsOptedOut = transactionResult.trustedContactsOptedOut || [];
   const appTrustedContactsNotified = transactionResult.appTrustedContactsNotified || [];
-  if (!transactionResult.alreadyExisted || transactionResult.shouldEnqueueNotification) {
-    const delivery = await enqueueSosNotificationTask({
+  if (transactionResult.kind === 'escort') {
+    if (!transactionResult.alreadyExisted && transactionResult.escortRelationship) {
+      await this.sendEscortPushNudge({
+        sessionId: transactionResult.sessionId,
+        relationship: transactionResult.escortRelationship,
+      });
+    }
+  } else if (!transactionResult.alreadyExisted || transactionResult.shouldEnqueueNotification) {
+    const delivery = await this.enqueueNotifications({
       sessionId: transactionResult.sessionId,
       ownerUid: uid,
       contacts: transactionResult.contacts,
@@ -229,7 +294,7 @@ class SOSRepository {
       deleteAfter: transactionResult.deleteAfter,
     });
     notificationSummary = delivery.notificationSummary;
-    await db.collection('sos_sessions_private').doc(transactionResult.sessionId).set({
+    await this.database.collection('sos_sessions_private').doc(transactionResult.sessionId).set({
       notificationSummary,
       notificationSagaStatus: 'enqueued',
       updatedAt: FieldValue.serverTimestamp(),
@@ -244,6 +309,33 @@ class SOSRepository {
     notification_summary: notificationSummary,
     expires_at: transactionResult.expiresAt.toISOString(),
   };
+  }
+
+  private async sendEscortPushNudge({ sessionId, relationship }: any): Promise<void> {
+  try {
+    const devicesSnap = await this.database.collection('user_push_devices_private')
+      .where('owner_uid', '==', relationship.trustedContactUid)
+      .limit(5)
+      .get();
+    const tokens = devicesSnap.docs
+      .map((doc: any) => cleanString(doc.data()?.fcm_token, 4096))
+      .filter(Boolean);
+    await Promise.all(tokens.map((token: string) => this.pushSender({
+      token,
+      title: `${relationship.ownerDisplayName || 'PulseTrackr user'} started sharing a walk with you`,
+      body: 'Open PulseTrackr to follow their walk.',
+      data: {
+        session_id: sessionId,
+        kind: 'escort',
+      },
+    })));
+  } catch (error: any) {
+    this.log.warn('Escort app push nudge failed', {
+      sessionId,
+      relationshipId: relationship.id,
+      errorMessage: String(error?.message || error),
+    });
+  }
   }
 
   async createAppTrustedContactInvite({ uid, now, ownerDisplayName }: any) {
@@ -408,11 +500,11 @@ class SOSRepository {
   }
 
   async appendLocation({ uid, payload, now }: any) {
-  const sessionRef = db.collection('sos_sessions_private').doc(payload.sessionId);
-  const updateRef = db.collection('sos_location_updates_private')
+  const sessionRef = this.database.collection('sos_sessions_private').doc(payload.sessionId);
+  const updateRef = this.database.collection('sos_location_updates_private')
     .doc(makeLocationUpdateId(payload.sessionId, payload.sequenceNumber));
 
-  const result = await db.runTransaction(async (transaction): Promise<any> => {
+  const result = await this.database.runTransaction(async (transaction): Promise<any> => {
     const sessionSnap = await transaction.get(sessionRef);
     assertOwnedActiveSession(sessionSnap, uid, now);
 
@@ -429,9 +521,9 @@ class SOSRepository {
       sessionId: payload.sessionId,
       decision: 'allowed',
       reason: `sequence:${payload.sequenceNumber}`,
-      redacted: { sequenceNumber: payload.sequenceNumber },
+      redacted: { kind: session.kind || 'sos', sequenceNumber: payload.sequenceNumber },
       deleteAfter: timestampToDate(session.deleteAfter) || retentionDate(now),
-    });
+    }, this.database);
 
     transaction.set(updateRef, {
       sessionId: payload.sessionId,
@@ -461,6 +553,8 @@ class SOSRepository {
     return {
       accepted: true,
       duplicate: false,
+      kind: session.kind || 'sos',
+      escortRelationshipId: session.escortRelationshipId,
       deleteAfter: timestampToDate(session.deleteAfter) || retentionDate(now),
     };
   });
@@ -472,6 +566,9 @@ class SOSRepository {
       location: payload.location,
       directionOfTravel: payload.directionOfTravel,
       deleteAfter: result.deleteAfter,
+      kind: result.kind,
+      escortRelationshipId: result.escortRelationshipId,
+      database: this.database,
     });
   }
 
@@ -479,7 +576,7 @@ class SOSRepository {
   }
 
   async notificationStatus({ uid, sessionId }: any) {
-  const sessionSnap = await db.collection('sos_sessions_private').doc(sessionId).get();
+  const sessionSnap = await this.database.collection('sos_sessions_private').doc(sessionId).get();
   if (!sessionSnap.exists) {
     throw new HttpsError('not-found', 'SOS session not found');
   }
@@ -500,9 +597,9 @@ class SOSRepository {
   }
 
   async resolve({ uid, payload, now }: any) {
-  const sessionRef = db.collection('sos_sessions_private').doc(payload.sessionId);
+  const sessionRef = this.database.collection('sos_sessions_private').doc(payload.sessionId);
 
-  const result = await db.runTransaction(async (transaction): Promise<any> => {
+  const result = await this.database.runTransaction(async (transaction): Promise<any> => {
     const sessionSnap = await transaction.get(sessionRef);
     if (!sessionSnap.exists) {
       throw new HttpsError('not-found', 'SOS session not found');
@@ -519,9 +616,9 @@ class SOSRepository {
       sessionId: payload.sessionId,
       decision: 'allowed',
       reason: payload.reason,
-      redacted: { wasAlreadyResolved: session.status === 'resolved' },
+      redacted: { kind: session.kind || 'sos', wasAlreadyResolved: session.status === 'resolved' },
       deleteAfter: timestampToDate(session.deleteAfter) || retentionDate(now),
-    });
+    }, this.database);
 
     if (session.status !== 'resolved') {
       transaction.update(sessionRef, withoutUndefined({
@@ -541,6 +638,8 @@ class SOSRepository {
     return {
       deleteAfter: timestampToDate(session.deleteAfter) || retentionDate(now),
       finalLocation: payload.finalLocation,
+      kind: session.kind || 'sos',
+      escortRelationshipId: session.escortRelationshipId,
     };
   });
 
@@ -549,6 +648,9 @@ class SOSRepository {
     ownerUid: uid,
     finalLocation: result.finalLocation,
     deleteAfter: result.deleteAfter,
+    kind: result.kind,
+    escortRelationshipId: result.escortRelationshipId,
+    database: this.database,
   });
 
   return { resolved: true };
@@ -557,14 +659,32 @@ class SOSRepository {
 
 sosRepository = new SOSRepository();
 
-async function updateAppTrustedContactAlerts({ sessionId, ownerUid, location, directionOfTravel, deleteAfter }: any) {
-  const relationships = await acceptedOutgoingAppTrustedContacts(ownerUid);
+export const __test = {
+  SOSRepository,
+  ESCORT_SESSION_EXPIRY_SECONDS,
+  ESCORT_RATE_LIMITS,
+  sessionExpirySeconds,
+  activationRateLimits,
+};
+
+async function updateAppTrustedContactAlerts({
+  sessionId,
+  ownerUid,
+  location,
+  directionOfTravel,
+  deleteAfter,
+  kind = 'sos',
+  escortRelationshipId,
+  database = db,
+}: any) {
+  const relationships = await appAlertRelationships({ database, ownerUid, kind, escortRelationshipId });
   if (!relationships.length) return;
 
-  const batch = db.batch();
+  const batch = database.batch();
   for (const relationship of relationships.slice(0, APP_TRUSTED_CONTACT_ALERT_LIMIT)) {
-    batch.set(appAlertRef(sessionId, relationship.id), withoutUndefined({
+    batch.set(appAlertRefForDb(database, sessionId, relationship.id), withoutUndefined({
       sessionId,
+      kind,
       ownerUid,
       recipientUid: relationship.trustedContactUid,
       relationshipId: relationship.id,
@@ -578,14 +698,23 @@ async function updateAppTrustedContactAlerts({ sessionId, ownerUid, location, di
   await batch.commit();
 }
 
-async function resolveAppTrustedContactAlerts({ sessionId, ownerUid, finalLocation, deleteAfter }: any) {
-  const relationships = await acceptedOutgoingAppTrustedContacts(ownerUid);
+async function resolveAppTrustedContactAlerts({
+  sessionId,
+  ownerUid,
+  finalLocation,
+  deleteAfter,
+  kind = 'sos',
+  escortRelationshipId,
+  database = db,
+}: any) {
+  const relationships = await appAlertRelationships({ database, ownerUid, kind, escortRelationshipId });
   if (!relationships.length) return;
 
-  const batch = db.batch();
+  const batch = database.batch();
   for (const relationship of relationships.slice(0, APP_TRUSTED_CONTACT_ALERT_LIMIT)) {
-    batch.set(appAlertRef(sessionId, relationship.id), withoutUndefined({
+    batch.set(appAlertRefForDb(database, sessionId, relationship.id), withoutUndefined({
       sessionId,
+      kind,
       ownerUid,
       recipientUid: relationship.trustedContactUid,
       relationshipId: relationship.id,
@@ -599,21 +728,32 @@ async function resolveAppTrustedContactAlerts({ sessionId, ownerUid, finalLocati
   await batch.commit();
 }
 
-async function acceptedOutgoingAppTrustedContacts(ownerUid: string) {
-  const snapshot = await db.collection('sos_app_trusted_contacts_private').where('ownerUid', '==', ownerUid).get();
+async function appAlertRelationships({ database, ownerUid, kind, escortRelationshipId }: any) {
+  if (kind === 'escort') {
+    return escortRelationshipId ? [{ id: escortRelationshipId }] : [];
+  }
+  return acceptedOutgoingAppTrustedContacts(database, ownerUid);
+}
+
+async function acceptedOutgoingAppTrustedContacts(database: any, ownerUid: string) {
+  const snapshot = await database.collection('sos_app_trusted_contacts_private').where('ownerUid', '==', ownerUid).get();
   return snapshot.docs
-    .map((doc) => ({ id: doc.id, ...doc.data() }) as any)
+    .map((doc: any) => ({ id: doc.id, ...doc.data() }) as any)
     .filter((relationship: any) => relationship.status === 'accepted' && relationship.trustedContactUid)
     .slice(0, APP_TRUSTED_CONTACT_ALERT_LIMIT);
 }
 
 function appAlertRef(sessionId: string, relationshipId: string) {
-  return db.collection('sos_app_alerts_private').doc(`${sessionId}_${relationshipId}`);
+  return appAlertRefForDb(db, sessionId, relationshipId);
 }
 
-async function applyActivationRateLimit(transaction: any, rateRef: any, now: Date) {
+function appAlertRefForDb(database: any, sessionId: string, relationshipId: string) {
+  return database.collection('sos_app_alerts_private').doc(`${sessionId}_${relationshipId}`);
+}
+
+async function applyActivationRateLimit(transaction: any, rateRef: any, now: Date, limits: any = HARD_LIMITS) {
   const snap = await transaction.get(rateRef);
-  const windowStartsAt = new Date(now.getTime() - HARD_LIMITS.activationWindowSeconds * 1000);
+  const windowStartsAt = new Date(now.getTime() - limits.activationWindowSeconds * 1000);
   const recentActivations: any[] = snap.exists
     ? ((snap.data() as any).recentActivations || [])
       .map((value: any) => timestampToDate(value))
@@ -621,10 +761,10 @@ async function applyActivationRateLimit(transaction: any, rateRef: any, now: Dat
     : [];
   const latest = recentActivations.at(-1);
 
-  if (latest && now.getTime() - latest.getTime() < HARD_LIMITS.activationCooldownSeconds * 1000) {
+  if (latest && now.getTime() - latest.getTime() < limits.activationCooldownSeconds * 1000) {
     throw new HttpsError('resource-exhausted', 'Please wait before starting another SOS session');
   }
-  if (recentActivations.length >= HARD_LIMITS.activationWindowLimit) {
+  if (recentActivations.length >= limits.activationWindowLimit) {
     throw new HttpsError('resource-exhausted', 'Too many SOS activations in the last hour');
   }
 
@@ -634,6 +774,37 @@ async function applyActivationRateLimit(transaction: any, rateRef: any, now: Dat
     updatedAt: FieldValue.serverTimestamp(),
     deleteAfter: Timestamp.fromDate(retentionDate(now)),
   }, { merge: true });
+}
+
+function sessionExpirySeconds(payload: any): number {
+  return payload.sessionKind === 'escort'
+    ? ESCORT_SESSION_EXPIRY_SECONDS
+    : payload.privacy.adminAccessExpiresAfterSeconds;
+}
+
+function activationRateLimits(kind: string) {
+  return kind === 'escort' ? ESCORT_RATE_LIMITS : HARD_LIMITS;
+}
+
+async function loadValidatedEscortRelationship(transaction: any, database: any, relationshipId: string, ownerUid: string) {
+  const relationshipRef = database.collection('sos_app_trusted_contacts_private').doc(relationshipId);
+  const relationshipSnap = await transaction.get(relationshipRef);
+  if (!relationshipSnap.exists) {
+    throw new HttpsError('not-found', 'Escort trusted contact relationship not found');
+  }
+
+  const relationship = relationshipSnap.data() as any;
+  if (relationship.ownerUid !== ownerUid) {
+    throw new HttpsError('permission-denied', 'Escort trusted contact relationship belongs to another user');
+  }
+  if (relationship.status !== 'accepted') {
+    throw new HttpsError('failed-precondition', 'Escort trusted contact relationship is not accepted');
+  }
+  if (!relationship.trustedContactUid) {
+    throw new HttpsError('failed-precondition', 'Escort trusted contact relationship is missing a recipient');
+  }
+
+  return { id: relationshipSnap.id, ...relationship };
 }
 
 function assertOwnedActiveSession(sessionSnap: any, uid: string, now: Date) {

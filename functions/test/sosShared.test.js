@@ -101,6 +101,42 @@ test('app trusted contact channel requires an accepted app route', () => {
   });
 });
 
+test('escort activation requires one app relationship and strips notification contacts', () => {
+  const payload = sanitizeActivationPayload({
+    client_session_id: 'client-escort',
+    session_kind: 'escort',
+    escort_relationship_id: 'relationship-1',
+    last_known_location: { latitude: 6.52, longitude: 3.37, captured_at: '2026-05-27T12:00:00Z' },
+    trusted_contacts_to_notify: [{
+      contact_id: 'contact-1',
+      display_name: 'Ada',
+      phone_number: '+2348012345678',
+      channels: ['sms', 'phone_call'],
+    }],
+  });
+
+  assert.equal(payload.sessionKind, 'escort');
+  assert.equal(payload.escortRelationshipId, 'relationship-1');
+  assert.deepEqual(payload.trustedContacts, []);
+
+  assert.throws(() => sanitizeActivationPayload({
+    client_session_id: 'client-escort',
+    session_kind: 'escort',
+    last_known_location: { latitude: 6.52, longitude: 3.37, captured_at: '2026-05-27T12:00:00Z' },
+  }), /escort_relationship_id is required/);
+});
+
+test('legacy activation payload defaults to sos kind', () => {
+  const payload = sanitizeActivationPayload({
+    client_session_id: 'client-1',
+    last_known_location: { latitude: 6.52, longitude: 3.37, captured_at: '2026-05-27T12:00:00Z' },
+    escort_relationship_id: 'ignored-for-sos',
+  });
+
+  assert.equal(payload.sessionKind, 'sos');
+  assert.equal(payload.escortRelationshipId, undefined);
+});
+
 test('location update ids are stable for idempotent append', () => {
   assert.equal(makeLocationUpdateId('abc', 7), 'abc_000000000007');
   assert.equal(makeIdempotencyKey('uid-123', 'client-abc'), makeIdempotencyKey('uid-123', 'client-abc'));
@@ -136,6 +172,11 @@ test('resolution payload allows only known reasons', () => {
     resolution_reason: 'false_alarm',
     resolved_at: '2026-05-27T12:05:00Z',
   }).reason, 'false_alarm');
+  assert.equal(sanitizeResolutionPayload({
+    session_id: 'session-1',
+    resolution_reason: 'arrived_safely',
+    resolved_at: '2026-05-27T12:05:00Z',
+  }).reason, 'arrived_safely');
 
   assert.throws(() => sanitizeResolutionPayload({
     session_id: 'session-1',
