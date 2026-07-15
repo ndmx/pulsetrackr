@@ -223,6 +223,10 @@ struct SOSActivationPayload: Equatable {
     var deviceMetadata: SOSDeviceMetadata
     var privacyPolicy: SOSPrivacyPolicy
     var source: String
+    /// Defaults to nil (backend treats absent as `sos`).
+    var sessionKind: SOSSessionKind?
+    /// Required when `sessionKind == .escort`; must be an accepted app relationship id.
+    var escortRelationshipId: String?
 
     init(
         clientSessionID: UUID = UUID(),
@@ -233,7 +237,9 @@ struct SOSActivationPayload: Equatable {
         trustedContactsToNotify: [SOSTrustedContactNotificationTarget] = [],
         deviceMetadata: SOSDeviceMetadata = .current(),
         privacyPolicy: SOSPrivacyPolicy = .default,
-        source: String = "ios"
+        source: String = "ios",
+        sessionKind: SOSSessionKind? = nil,
+        escortRelationshipId: String? = nil
     ) {
         self.clientSessionID = clientSessionID
         self.activatedAt = activatedAt
@@ -244,10 +250,14 @@ struct SOSActivationPayload: Equatable {
         self.deviceMetadata = deviceMetadata
         self.privacyPolicy = privacyPolicy
         self.source = source
+        self.sessionKind = sessionKind
+        self.escortRelationshipId = escortRelationshipId
     }
 
     var functionPayload: [String: Any] {
         let dto = contractPayload
+        // Existing SOS fields stay snake_case for the callable. New escort fields use
+        // ContractDTO coding-key names (camelCase) on the wire: sessionKind / escortRelationshipId.
         return [
             "client_session_id": dto.clientSessionID,
             "activated_at": SOSPayloadCoding.string(from: dto.activatedAt),
@@ -257,7 +267,9 @@ struct SOSActivationPayload: Equatable {
             "direction_of_travel": dto.directionOfTravel?.functionPayload as Any,
             "trusted_contacts_to_notify": dto.trustedContacts.map(\.functionPayload),
             "device": dto.device.functionPayload,
-            "privacy": dto.privacy.functionPayload
+            "privacy": dto.privacy.functionPayload,
+            "sessionKind": dto.sessionKind?.rawValue as Any,
+            "escortRelationshipId": dto.escortRelationshipID as Any
         ].compactingNilValuesForSOS
     }
 
@@ -271,7 +283,9 @@ struct SOSActivationPayload: Equatable {
             "direction_of_travel": resolvedDirectionOfTravel?.functionPayload as Any,
             "trusted_contacts_to_notify": trustedContactsToNotify.map(\.redactedPayload),
             "device": deviceMetadata.functionPayload,
-            "privacy": privacyPolicy.functionPayload
+            "privacy": privacyPolicy.functionPayload,
+            "sessionKind": sessionKind?.rawValue as Any,
+            "escortRelationshipId": escortRelationshipId as Any
         ].compactingNilValuesForSOS
     }
 
@@ -293,14 +307,20 @@ struct SOSActivationPayload: Equatable {
     }
 
     private var contractPayload: ContractDTO.ActivationPayload {
-        ContractDTO.ActivationPayload(
+        let contractKind: ContractDTO.SessionKind? = {
+            guard let sessionKind else { return nil }
+            return ContractDTO.SessionKind(rawValue: sessionKind.rawValue)
+        }()
+        return ContractDTO.ActivationPayload(
             activatedAt: activatedAt,
             clientSessionID: clientSessionID.uuidString,
             device: deviceMetadata.contractDTO,
             directionOfTravel: resolvedDirectionOfTravel?.contractDTO,
+            escortRelationshipID: escortRelationshipId,
             lastKnownLocation: lastKnownLocation.contractDTO,
             privacy: privacyPolicy.contractDTO,
             recentTrail: privacyScopedTrail.map(\.contractDTO),
+            sessionKind: contractKind,
             source: source,
             trustedContacts: trustedContactsToNotify.map(\.contractDTO)
         )
@@ -379,6 +399,7 @@ enum SOSResolutionReason: String, Codable, CaseIterable, Equatable {
     case falseAlarm = "false_alarm"
     case timedOut = "timed_out"
     case transferredToCareTeam = "transferred_to_care_team"
+    case arrivedSafely = "arrived_safely"
 }
 
 struct SOSActivationResponse {
@@ -510,6 +531,8 @@ struct SOSAppAlert: Identifiable, Equatable {
     var status: String
     var lastKnownLocation: SOSLocationSnapshot?
     var updatedAt: Date
+    /// Defaults to `.sos` when absent (legacy alert docs predate escort).
+    var kind: SOSSessionKind
 
     init?(document: QueryDocumentSnapshot) {
         let data = document.data()
@@ -527,6 +550,35 @@ struct SOSAppAlert: Identifiable, Equatable {
         self.status = data["status"] as? String ?? "active"
         self.lastKnownLocation = Self.location(from: data["lastKnownLocation"])
         self.updatedAt = Self.date(from: data["updatedAt"]) ?? Self.date(from: data["createdAt"]) ?? Date.distantPast
+        self.kind = Self.sessionKind(from: data)
+    }
+
+    /// Test and in-memory construction path (Firestore documents use `init?(document:)`).
+    init(
+        id: String,
+        sessionID: String,
+        ownerUID: String,
+        ownerDisplayName: String,
+        status: String,
+        lastKnownLocation: SOSLocationSnapshot?,
+        updatedAt: Date,
+        kind: SOSSessionKind = .sos
+    ) {
+        self.id = id
+        self.sessionID = sessionID
+        self.ownerUID = ownerUID
+        self.ownerDisplayName = ownerDisplayName
+        self.status = status
+        self.lastKnownLocation = lastKnownLocation
+        self.updatedAt = updatedAt
+        self.kind = kind
+    }
+
+    private static func sessionKind(from data: [String: Any]) -> SOSSessionKind {
+        let raw = (data["kind"] as? String)
+            ?? (data["sessionKind"] as? String)
+            ?? (data["session_kind"] as? String)
+        return raw.flatMap(SOSSessionKind.init(rawValue:)) ?? .sos
     }
 
     private static func location(from value: Any?) -> SOSLocationSnapshot? {

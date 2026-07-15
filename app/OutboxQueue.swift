@@ -92,6 +92,45 @@ struct SOSActivateOutboxPayload: Codable {
     var directionOfTravel: SOSDirectionOfTravel?
     var trustedContacts: [SOSTrustedContactNotificationTarget]
     var privacyPolicy: SOSPrivacyPolicy
+    /// Absent on legacy outbox payloads; treat as `.sos`.
+    var sessionKind: SOSSessionKind?
+    /// Required when `sessionKind == .escort`.
+    var escortRelationshipId: String?
+
+    init(
+        localSessionID: UUID,
+        activatedAt: Date,
+        lastKnownLocation: SOSLocationSnapshot,
+        recentTrail: [SOSLocationSnapshot],
+        directionOfTravel: SOSDirectionOfTravel? = nil,
+        trustedContacts: [SOSTrustedContactNotificationTarget],
+        privacyPolicy: SOSPrivacyPolicy,
+        sessionKind: SOSSessionKind? = nil,
+        escortRelationshipId: String? = nil
+    ) {
+        self.localSessionID = localSessionID
+        self.activatedAt = activatedAt
+        self.lastKnownLocation = lastKnownLocation
+        self.recentTrail = recentTrail
+        self.directionOfTravel = directionOfTravel
+        self.trustedContacts = trustedContacts
+        self.privacyPolicy = privacyPolicy
+        self.sessionKind = sessionKind
+        self.escortRelationshipId = escortRelationshipId
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        localSessionID = try container.decode(UUID.self, forKey: .localSessionID)
+        activatedAt = try container.decode(Date.self, forKey: .activatedAt)
+        lastKnownLocation = try container.decode(SOSLocationSnapshot.self, forKey: .lastKnownLocation)
+        recentTrail = try container.decode([SOSLocationSnapshot].self, forKey: .recentTrail)
+        directionOfTravel = try container.decodeIfPresent(SOSDirectionOfTravel.self, forKey: .directionOfTravel)
+        trustedContacts = try container.decode([SOSTrustedContactNotificationTarget].self, forKey: .trustedContacts)
+        privacyPolicy = try container.decode(SOSPrivacyPolicy.self, forKey: .privacyPolicy)
+        sessionKind = try container.decodeIfPresent(SOSSessionKind.self, forKey: .sessionKind)
+        escortRelationshipId = try container.decodeIfPresent(String.self, forKey: .escortRelationshipId)
+    }
 }
 
 struct SOSLocationUpdateOutboxPayload: Codable {

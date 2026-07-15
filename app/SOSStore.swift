@@ -116,12 +116,24 @@ final class SOSStore: ObservableObject {
         lastKnownPoint?.coordinate
     }
 
-    func startSession(from location: CLLocation?) {
+    func startSession(
+        from location: CLLocation?,
+        kind: SOSSessionKind = .sos,
+        escortRelationship: SOSAppTrustedContactRelationship? = nil
+    ) {
         if let location {
             record(location: location, force: true)
         }
 
-        let newSession = SOSSession(id: UUID(), startedAt: .now, endedAt: nil, state: .active)
+        let relationshipId = kind == .escort ? escortRelationship?.id : nil
+        let newSession = SOSSession(
+            id: UUID(),
+            startedAt: .now,
+            endedAt: nil,
+            state: .active,
+            kind: kind,
+            escortRelationshipId: relationshipId
+        )
         session = newSession
         remoteSessionID = nil
         alertedContactIDs = []
@@ -129,22 +141,19 @@ final class SOSStore: ObservableObject {
         queuedEvents = []
         lastRemoteError = nil
         nextLocationSequenceNumber = 0
-        deliveryState = activeTrustedContacts.isEmpty ? .localOnly : .syncing
+        deliveryState = initialDeliveryState(for: kind, hasEscortRelationship: relationshipId != nil)
         enqueue(.started, coordinate: location?.coordinate ?? lastKnownCoordinate, status: .waitingForRemote)
         guard let activationLocation = lastKnownPoint?.locationSnapshot else {
-            lastRemoteError = "SOS is saved locally until your device has a current location."
+            lastRemoteError = kind == .escort
+                ? "Walk is saved locally until your device has a current location."
+                : "SOS is saved locally until your device has a current location."
             deliveryState = .localOnly
             persistSnapshot()
             return
         }
-        enqueueSOSOperation(.sosActivate(SOSActivateOutboxPayload(
-            localSessionID: newSession.id,
-            activatedAt: newSession.startedAt,
-            lastKnownLocation: activationLocation,
-            recentTrail: trail.compactMap(\.locationSnapshot),
-            directionOfTravel: latestDirectionOfTravel,
-            trustedContacts: activeTrustedContacts.compactMap(\.notificationTarget),
-            privacyPolicy: privacyPolicy
+        enqueueSOSOperation(.sosActivate(makeActivateOutboxPayload(
+            for: newSession,
+            activationLocation: activationLocation
         )))
         queuedActivationSessionID = newSession.id
         persistSnapshot()
@@ -152,37 +161,38 @@ final class SOSStore: ObservableObject {
     }
 
     func stopSession() {
-        guard var activeSession = session, activeSession.isActive else { return }
-        activeSession.state = .stopping
-        session = activeSession
-        let event = enqueue(.stopped, coordinate: lastKnownCoordinate, status: .waitingForRemote)
-
-        activeSession.state = .stopped
-        activeSession.endedAt = .now
-        session = activeSession
-        enqueueSOSOperation(.sosResolve(SOSResolveOutboxPayload(
-            localEventID: event.id,
-            localSessionID: activeSession.id,
-            remoteSessionID: remoteSessionID,
-            reason: .userResolved,
-            finalLocation: lastKnownPoint?.locationSnapshot,
-            resolvedAt: activeSession.endedAt ?? .now
-        )))
-        persistSnapshot()
-        syncRemote(force: true)
+        resolveSession(reason: .userResolved, terminalState: .stopped, eventKind: .stopped)
     }
 
     func cancelSession() {
-        guard var activeSession = session else { return }
-        activeSession.state = .cancelled
+        resolveSession(reason: .falseAlarm, terminalState: .cancelled, eventKind: .cancelled)
+    }
+
+    /// Ends an escort walk after the walker arrives. Reuses the shared resolve pipeline.
+    func markArrivedSafely() {
+        resolveSession(reason: .arrivedSafely, terminalState: .stopped, eventKind: .stopped)
+    }
+
+    private func resolveSession(
+        reason: SOSResolutionReason,
+        terminalState: SOSSessionState,
+        eventKind: SOSQueueEventKind
+    ) {
+        guard var activeSession = session, activeSession.isActive else { return }
+        if terminalState == .stopped {
+            activeSession.state = .stopping
+            session = activeSession
+        }
+        let event = enqueue(eventKind, coordinate: lastKnownCoordinate, status: .waitingForRemote)
+
+        activeSession.state = terminalState
         activeSession.endedAt = .now
         session = activeSession
-        let event = enqueue(.cancelled, coordinate: lastKnownCoordinate, status: .waitingForRemote)
         enqueueSOSOperation(.sosResolve(SOSResolveOutboxPayload(
             localEventID: event.id,
             localSessionID: activeSession.id,
             remoteSessionID: remoteSessionID,
-            reason: .falseAlarm,
+            reason: reason,
             finalLocation: lastKnownPoint?.locationSnapshot,
             resolvedAt: activeSession.endedAt ?? .now
         )))
@@ -475,15 +485,7 @@ final class SOSStore: ObservableObject {
             throw SOSStoreError.missingLocation
         }
 
-        let payload = SOSActivationPayload(
-            clientSessionID: session.id,
-            activatedAt: session.startedAt,
-            lastKnownLocation: lastKnownLocation,
-            recentTrail: trail.compactMap(\.locationSnapshot),
-            directionOfTravel: latestDirectionOfTravel,
-            trustedContactsToNotify: activeTrustedContacts.compactMap(\.notificationTarget),
-            privacyPolicy: privacyPolicy
-        )
+        let payload = makeActivationPayload(for: session, lastKnownLocation: lastKnownLocation)
         let response = try await remote.activateSOS(payload: payload)
         remoteSessionID = response.sessionID
         alertedContactIDs = Set(response.trustedContactsNotified)
@@ -491,7 +493,10 @@ final class SOSStore: ObservableObject {
         if let smsOptOutNotice {
             lastRemoteError = smsOptOutNotice
         }
-        if !activeTrustedContacts.isEmpty && response.notificationSummary.sent == 0 && response.notificationSummary.queued == 0 {
+        if session.kind != .escort,
+           !activeTrustedContacts.isEmpty,
+           response.notificationSummary.sent == 0,
+           response.notificationSummary.queued == 0 {
             throw SOSStoreError.noTrustedContactDelivery
         }
         if !response.trustedContactsNotified.isEmpty {
@@ -638,16 +643,57 @@ final class SOSStore: ObservableObject {
     private func enqueueActivationIfNeeded() {
         guard remoteSessionID == nil, let activeSession = session, let activationLocation = lastKnownPoint?.locationSnapshot else { return }
         guard queuedActivationSessionID != activeSession.id else { return }
-        enqueueSOSOperation(.sosActivate(SOSActivateOutboxPayload(
-            localSessionID: activeSession.id,
-            activatedAt: activeSession.startedAt,
+        enqueueSOSOperation(.sosActivate(makeActivateOutboxPayload(
+            for: activeSession,
+            activationLocation: activationLocation
+        )))
+        queuedActivationSessionID = activeSession.id
+    }
+
+    private func initialDeliveryState(for kind: SOSSessionKind, hasEscortRelationship: Bool) -> SOSDeliveryState {
+        switch kind {
+        case .escort:
+            return hasEscortRelationship ? .syncing : .localOnly
+        case .sos:
+            return activeTrustedContacts.isEmpty ? .localOnly : .syncing
+        }
+    }
+
+    private func makeActivateOutboxPayload(
+        for session: SOSSession,
+        activationLocation: SOSLocationSnapshot
+    ) -> SOSActivateOutboxPayload {
+        let isEscort = session.kind == .escort
+        return SOSActivateOutboxPayload(
+            localSessionID: session.id,
+            activatedAt: session.startedAt,
             lastKnownLocation: activationLocation,
             recentTrail: trail.compactMap(\.locationSnapshot),
             directionOfTravel: latestDirectionOfTravel,
-            trustedContacts: activeTrustedContacts.compactMap(\.notificationTarget),
-            privacyPolicy: privacyPolicy
-        )))
-        queuedActivationSessionID = activeSession.id
+            trustedContacts: isEscort ? [] : activeTrustedContacts.compactMap(\.notificationTarget),
+            privacyPolicy: privacyPolicy,
+            // Omit kind on plain SOS so the wire payload stays legacy-compatible.
+            sessionKind: isEscort ? .escort : nil,
+            escortRelationshipId: isEscort ? session.escortRelationshipId : nil
+        )
+    }
+
+    private func makeActivationPayload(
+        for session: SOSSession,
+        lastKnownLocation: SOSLocationSnapshot
+    ) -> SOSActivationPayload {
+        let isEscort = session.kind == .escort
+        return SOSActivationPayload(
+            clientSessionID: session.id,
+            activatedAt: session.startedAt,
+            lastKnownLocation: lastKnownLocation,
+            recentTrail: trail.compactMap(\.locationSnapshot),
+            directionOfTravel: latestDirectionOfTravel,
+            trustedContactsToNotify: isEscort ? [] : activeTrustedContacts.compactMap(\.notificationTarget),
+            privacyPolicy: privacyPolicy,
+            sessionKind: isEscort ? .escort : nil,
+            escortRelationshipId: isEscort ? session.escortRelationshipId : nil
+        )
     }
 
     private func replayQueuedEvents() {
@@ -710,6 +756,7 @@ final class SOSStore: ObservableObject {
                 markEvents(ofKind: .started, status: .delivered)
                 return
             }
+            let sessionKind = payload.sessionKind ?? session?.kind ?? .sos
             let response = try await remote.activateSOS(payload: SOSActivationPayload(
                 clientSessionID: payload.localSessionID,
                 activatedAt: payload.activatedAt,
@@ -717,7 +764,9 @@ final class SOSStore: ObservableObject {
                 recentTrail: payload.recentTrail,
                 directionOfTravel: payload.directionOfTravel,
                 trustedContactsToNotify: payload.trustedContacts,
-                privacyPolicy: payload.privacyPolicy
+                privacyPolicy: payload.privacyPolicy,
+                sessionKind: sessionKind,
+                escortRelationshipId: payload.escortRelationshipId
             ))
             remoteSessionID = response.sessionID
             alertedContactIDs = Set(response.trustedContactsNotified)
@@ -725,7 +774,10 @@ final class SOSStore: ObservableObject {
             if let smsOptOutNotice {
                 lastRemoteError = smsOptOutNotice
             }
-            if !activeTrustedContacts.isEmpty && response.notificationSummary.sent == 0 && response.notificationSummary.queued == 0 {
+            if sessionKind != .escort,
+               !activeTrustedContacts.isEmpty,
+               response.notificationSummary.sent == 0,
+               response.notificationSummary.queued == 0 {
                 throw SOSStoreError.noTrustedContactDelivery
             }
             if !response.trustedContactsNotified.isEmpty {
@@ -864,16 +916,37 @@ private struct StoredSOSSession: Codable {
     var startedAt: Date
     var endedAt: Date?
     var state: SOSSessionState
+    var kind: SOSSessionKind?
+    var escortRelationshipId: String?
 
     init(_ session: SOSSession) {
         self.id = session.id
         self.startedAt = session.startedAt
         self.endedAt = session.endedAt
         self.state = session.state
+        self.kind = session.kind
+        self.escortRelationshipId = session.escortRelationshipId
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        startedAt = try container.decode(Date.self, forKey: .startedAt)
+        endedAt = try container.decodeIfPresent(Date.self, forKey: .endedAt)
+        state = try container.decode(SOSSessionState.self, forKey: .state)
+        kind = try container.decodeIfPresent(SOSSessionKind.self, forKey: .kind)
+        escortRelationshipId = try container.decodeIfPresent(String.self, forKey: .escortRelationshipId)
     }
 
     var session: SOSSession {
-        SOSSession(id: id, startedAt: startedAt, endedAt: endedAt, state: state)
+        SOSSession(
+            id: id,
+            startedAt: startedAt,
+            endedAt: endedAt,
+            state: state,
+            kind: kind ?? .sos,
+            escortRelationshipId: escortRelationshipId
+        )
     }
 }
 

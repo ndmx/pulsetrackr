@@ -43,16 +43,20 @@ struct SecurityTests {
 
     // MARK: - Coordinate privacy
 
-    @Test @MainActor func publicCoordinateIsNilUntilBackendReveal() {
+    @Test @MainActor func publicCoordinateIsNotExactReporterLocation() {
         let store = IncidentStore()
         let exact = CLLocationCoordinate2D(latitude: 6.5244, longitude: 3.3792)
         store.addIncident(
-            title: "Privacy test", summary: "Verifying H3 privacy.",
+            title: "Privacy test", summary: "Verifying local approximate privacy.",
             category: .community, subtype: .localWarning, severity: .low,
             neighborhood: "Test", reporterCoordinate: exact
         )
         let added = store.incidents.last!
-        #expect(added.coordinate == nil, "Public coordinate is backend-revealed only after H3 k-anonymity")
+        // Local visibility uses a coarse approximate pin so the reporter can see
+        // their own report; the exact reporter coordinate stays private and is
+        // never published as the public map pin.
+        #expect(added.coordinate != nil)
+        #expect(added.coordinate?.latitude != exact.latitude || added.coordinate?.longitude != exact.longitude)
     }
 
     @Test @MainActor func publicCoordinateIsStoredSeparatelyFromReporterCoordinate() {
@@ -64,14 +68,14 @@ struct SecurityTests {
             neighborhood: "Test", reporterCoordinate: exact
         )
         let added = store.incidents.last!
-        // reporterCoordinate holds the exact location (private)
-        // coordinate is the public map location, revealed later by the backend
-        // as an H3 cell center once k-anonymity is met.
+        // reporterCoordinate holds the exact location (private).
+        // coordinate is a local approximate display pin (not the exact reporter point).
         #expect(added.reporterCoordinate != nil)
         let reporter = added.reporterCoordinate!
         #expect(reporter.latitude  == exact.latitude)
         #expect(reporter.longitude == exact.longitude)
-        #expect(added.coordinate == nil)
+        #expect(added.coordinate != nil)
+        #expect(added.coordinate?.latitude != exact.latitude || added.coordinate?.longitude != exact.longitude)
     }
 
     @Test @MainActor func noReporterCoordinateStoresNilInstead() {

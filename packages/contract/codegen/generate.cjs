@@ -60,6 +60,9 @@ const definitions = {
   // ── push ──
   RegisterPushDevicePayload: C.registerPushDevicePayload,
   PushDeviceRecord: C.pushDeviceRecord,
+  // ── pulse ──
+  PulseTier: C.pulseTier,
+  NeighborhoodPulse: C.neighborhoodPulse,
 };
 
 // Sanity: every name must resolve to a defined schema (catches a renamed/removed export).

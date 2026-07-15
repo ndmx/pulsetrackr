@@ -1,6 +1,13 @@
 import CoreLocation
 import Foundation
 
+enum SOSSessionKind: String, Codable, Identifiable {
+    case sos
+    case escort
+
+    var id: String { rawValue }
+}
+
 enum SOSSessionState: String, Codable, Identifiable {
     case active
     case stopping
@@ -86,6 +93,26 @@ struct SOSSession: Identifiable {
     var startedAt: Date
     var endedAt: Date?
     var state: SOSSessionState
+    /// Defaults to `.sos` for legacy sessions restored from older snapshots.
+    var kind: SOSSessionKind
+    /// App trusted-contact relationship id when `kind == .escort`.
+    var escortRelationshipId: String?
+
+    init(
+        id: UUID,
+        startedAt: Date,
+        endedAt: Date? = nil,
+        state: SOSSessionState,
+        kind: SOSSessionKind = .sos,
+        escortRelationshipId: String? = nil
+    ) {
+        self.id = id
+        self.startedAt = startedAt
+        self.endedAt = endedAt
+        self.state = state
+        self.kind = kind
+        self.escortRelationshipId = escortRelationshipId
+    }
 
     var isActive: Bool {
         state == .active || state == .stopping

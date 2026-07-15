@@ -221,5 +221,7 @@ export const publicIncident = z.object({
   source: boundedString(40).optional(),
   /** Reporter reputation tier at submit time — tier only, never an identity. */
   reporter_trust_tier: reporterTrustTier.optional(),
+  /** Attribution for officially ingested incidents (e.g. a weather-alert feed). */
+  official_source_name: boundedString(120).optional(),
 });
 export type PublicIncident = z.infer<typeof publicIncident>;
