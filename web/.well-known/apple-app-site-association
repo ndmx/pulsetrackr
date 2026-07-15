@@ -1,0 +1,14 @@
+{
+  "applinks": {
+    "details": [
+      {
+        "appID": "TEAMID.org.pulsetracker.pulsetrackr.pulsetrackr",
+        "components": [
+          {
+            "/": "/i/*"
+          }
+        ]
+      }
+    ]
+  }
+}

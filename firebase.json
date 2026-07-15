@@ -23,6 +23,26 @@
       ]
     }
   ],
+  "hosting": {
+    "public": "web",
+    "rewrites": [
+      {
+        "source": "/i/**",
+        "function": "incident_share_page"
+      }
+    ],
+    "headers": [
+      {
+        "source": "/.well-known/apple-app-site-association",
+        "headers": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ]
+      }
+    ]
+  },
   "emulators": {
     "auth": {
       "port": 9099
