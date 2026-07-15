@@ -13,7 +13,7 @@ must be too.
 
 | Priority | Item | Why |
 |---|---|---|
-| P0 | Provision Twilio / SendGrid secrets + sender verification | SOS that silently fails kills the brand |
+| P0 | Provision Twilio SMS/voice/email secrets + sender verification | SOS that silently fails kills the brand |
 | P0 | Delivery-receipt monitoring + alerting | You must *know* a notification failed |
 | P0 | Named incident-response owner + runbook | Accountability before lives depend on it |
 | P0 | Deploy backend (functions + rules + `record_incident_concern`) | App ship ≠ backend deploy — avoid the geohash version-skew gotcha (`WIKI.md` §9) |

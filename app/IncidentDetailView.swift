@@ -5,6 +5,7 @@ struct IncidentDetailView: View {
     @Environment(\.openURL) private var openURL
     @Environment(\.dismiss) private var dismiss
     @State private var showsConcernDialog = false
+    @State private var shareCardImage: UIImage?
     var incident: Incident
 
     private var liveIncident: Incident {
@@ -29,6 +30,19 @@ struct IncidentDetailView: View {
         .background(DS.Color.background)
         .navigationTitle(liveIncident.subtype.label)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            if liveIncident.remoteDocumentID != nil,
+               let shareURL = ShareConfig.shareURL(for: liveIncident) {
+                ToolbarItem(placement: .topBarTrailing) {
+                    shareToolbarLink(url: shareURL)
+                }
+            }
+        }
+        .task(id: incident.id) {
+            // Rendered once per incident, not per body evaluation — ImageRenderer
+            // is too heavy to run inside the toolbar builder on a live view.
+            shareCardImage = IncidentShareCard.render(incident: liveIncident)
+        }
         .confirmationDialog(
             "Why are you reporting this?",
             isPresented: $showsConcernDialog,
@@ -43,6 +57,24 @@ struct IncidentDetailView: View {
             Button("Cancel", role: .cancel) { }
         } message: {
             Text("PulseTrackr hides this report on your device and sends a private moderation signal for review.")
+        }
+    }
+
+    @ViewBuilder
+    private func shareToolbarLink(url: URL) -> some View {
+        // Share shape: URL is the ShareLink item; rendered card is SharePreview only
+        // (URL + Image collection needs a custom Transferable wrapper — kept simple).
+        if let cardImage = shareCardImage {
+            ShareLink(
+                item: url,
+                preview: SharePreview(liveIncident.title, image: Image(uiImage: cardImage))
+            ) {
+                Label("Share", systemImage: "square.and.arrow.up")
+            }
+        } else {
+            ShareLink(item: url) {
+                Label("Share", systemImage: "square.and.arrow.up")
+            }
         }
     }
 
@@ -62,7 +94,7 @@ struct IncidentDetailView: View {
             }
 
             VStack(alignment: .leading, spacing: DS.Space.sm) {
-                Label(liveIncident.confidence.rawValue, systemImage: liveIncident.confidence.icon)
+                Label(liveIncident.confidenceLabel, systemImage: liveIncident.confidence.icon)
                     .font(DS.Font.label())
                     .textCase(.uppercase)
                     .foregroundStyle(liveIncident.confidence.color)

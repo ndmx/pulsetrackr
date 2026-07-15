@@ -1,0 +1,57 @@
+name: Phase 1 Contract Gate
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - arch/contract-foundation
+
+jobs:
+  contract-functions-ios:
+    name: Contract, Functions, iOS
+    runs-on: macos-15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install contract dependencies
+        working-directory: packages/contract
+        run: npm ci
+
+      - name: Build and generate contract
+        working-directory: packages/contract
+        run: npm run codegen
+
+      - name: Verify generated contract is committed
+        run: git diff --exit-code -- app/Generated/PulseTrackrContract.generated.swift packages/contract/codegen/pulsetrackr-contract.schema.json docs/api/contract.md
+
+      - name: Install Functions dependencies
+        working-directory: functions
+        run: npm ci
+
+      - name: Build and test Functions
+        working-directory: functions
+        run: npm test
+
+      - name: Install Firebase CLI
+        run: npm install -g firebase-tools
+
+      - name: Test Firestore rules
+        working-directory: functions
+        run: npm run test:rules
+
+      - name: Build and test iOS app
+        run: |
+          xcodebuild test \
+            -project pulsetrackr.xcodeproj \
+            -scheme pulsetrackr \
+            -destination 'platform=iOS Simulator,name=iPhone 16' \
+            CODE_SIGNING_ALLOWED=NO \
+            -test-timeouts-enabled YES \
+            -maximum-test-execution-time-allowance 240

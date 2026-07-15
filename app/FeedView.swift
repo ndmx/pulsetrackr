@@ -34,13 +34,16 @@ private enum FeedSheetPosition {
 }
 
 struct FeedView: View {
+    @Environment(\.colorScheme) private var colorScheme
     @EnvironmentObject private var incidentStore: IncidentStore
     @State private var selectedScope: FeedScope = .all
     @State private var selectedCategory: IncidentCategory?
     @State private var searchText = ""
     @State private var isShowingSearch = false
     @State private var isShowingFilters = true
+    @State private var isMapExploreMode = false
     @State private var sheetPosition: FeedSheetPosition = .expanded
+    @State private var sheetPositionBeforeMapExplore: FeedSheetPosition = .expanded
     @GestureState private var sheetDragOffset: CGFloat = 0
     @EnvironmentObject private var locationManager: LocationManager
     @AppStorage(AppStorageKey.watchRadius) private var watchRadius = 3.0
@@ -113,13 +116,21 @@ struct FeedView: View {
         return min(max(proposedHeight, FeedSheetPosition.collapsed.height(in: availableHeight)), FeedSheetPosition.full.height(in: availableHeight))
     }
 
+    private var mapOverlayColors: [Color] {
+        if colorScheme == .dark {
+            return [.black.opacity(0.50), .black.opacity(0.04), .black.opacity(0.94)]
+        }
+        return [.white.opacity(0.72), .white.opacity(0.08), DS.Color.background.opacity(0.96)]
+    }
+
     var body: some View {
         GeometryReader { proxy in
             ZStack(alignment: .bottom) {
                 mapLayer
+                    .allowsHitTesting(isMapExploreMode)
 
                 LinearGradient(
-                    colors: [.black.opacity(0.50), .black.opacity(0.04), .black.opacity(0.94)],
+                    colors: mapOverlayColors,
                     startPoint: .top,
                     endPoint: .bottom
                 )
@@ -132,10 +143,9 @@ struct FeedView: View {
                 bottomSheet(availableHeight: proxy.size.height)
             }
         }
-        .background(.black)
+        .background(DS.Color.background)
         .toolbar(.hidden, for: .navigationBar)
-        .preferredColorScheme(.dark)
-        .onAppear { locationManager.requestCurrentLocation() }
+        .onAppear { locationManager.refreshCurrentLocationIfAuthorized() }
         .onReceive(locationManager.$currentCoordinate) { coordinate in
             guard let coordinate, !hasCenteredOnUser else { return }
             hasCenteredOnUser = true
@@ -164,7 +174,9 @@ struct FeedView: View {
 
     private var appleMapLayer: some View {
         Map(position: $cameraPosition) {
-            UserAnnotation()
+            if isLocationAuthorized {
+                UserAnnotation()
+            }
 
             ForEach(settingsFilteredIncidents) { incident in
                 if let coordinate = incident.coordinate {
@@ -179,9 +191,13 @@ struct FeedView: View {
                 }
             }
         }
-        .mapStyle(.hybrid(elevation: .realistic))
+        .mapStyle(colorScheme == .dark ? .hybrid(elevation: .realistic) : .standard(elevation: .realistic))
         .ignoresSafeArea()
-        .preferredColorScheme(.dark)
+    }
+
+    private var isLocationAuthorized: Bool {
+        locationManager.authorizationStatus == .authorizedWhenInUse
+            || locationManager.authorizationStatus == .authorizedAlways
     }
 
     private func topOverlay(sheetHeight: CGFloat) -> some View {
@@ -191,11 +207,11 @@ struct FeedView: View {
                     Text("AROUND YOU")
                         .font(DS.Font.caption())
                         .fontWeight(.heavy)
-                        .foregroundStyle(.white)
+                        .foregroundStyle(DS.Color.textPrimary)
                     Text("Nearby area • Last 24 hours")
                         .font(DS.Font.caption())
                         .fontWeight(.semibold)
-                        .foregroundStyle(.white.opacity(0.62))
+                        .foregroundStyle(DS.Color.textSecondary)
                 }
 
                 Spacer()
@@ -213,7 +229,7 @@ struct FeedView: View {
                 Text(confirmedSightingsLabel)
                     .font(DS.Font.body())
                     .fontWeight(.semibold)
-                    .foregroundStyle(.white.opacity(0.70))
+                    .foregroundStyle(DS.Color.textSecondary)
             }
             .opacity(sheetPosition == .full ? 0 : 1)
             // Sit a hair above the sheet top (sheetHeight) so the second line
@@ -231,6 +247,14 @@ struct FeedView: View {
                 Spacer()
 
                 HStack(spacing: 10) {
+                    IconCircleButton(
+                        icon: isMapExploreMode ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right",
+                        accessibilityLabel: isMapExploreMode ? "Close interactive map" : "Explore interactive map",
+                        isActive: isMapExploreMode
+                    ) {
+                        toggleMapExploreMode()
+                    }
+
                     IconCircleButton(
                         icon: isShowingSearch ? "magnifyingglass.circle.fill" : "magnifyingglass",
                         accessibilityLabel: isShowingSearch ? "Hide search" : "Search feed"
@@ -283,7 +307,7 @@ struct FeedView: View {
                 }
             } label: {
                 Capsule()
-                    .fill(.white.opacity(0.30))
+                    .fill(DS.Color.textTertiary.opacity(0.50))
                     .frame(width: 44, height: 5)
                     .padding(.top, 10)
                     .padding(.bottom, 2)
@@ -298,7 +322,7 @@ struct FeedView: View {
                         Text("AROUND YOU")
                             .font(DS.Font.caption2())
                             .fontWeight(.heavy)
-                            .foregroundStyle(.white.opacity(0.54))
+                            .foregroundStyle(DS.Color.textTertiary)
                         Text(headline)
                             .font(DS.Font.title3())
                             .fontWeight(.heavy)
@@ -329,15 +353,15 @@ struct FeedView: View {
             HStack {
                 Text(sectionTitle)
                     .font(DS.Font.cardTitle())
-                    .foregroundStyle(.white)
+                    .foregroundStyle(DS.Color.textPrimary)
                 Spacer()
                 Text("\(filteredIncidents.count)")
                     .font(DS.Font.caption())
                     .fontWeight(.heavy)
-                    .foregroundStyle(.white.opacity(0.72))
+                    .foregroundStyle(DS.Color.textSecondary)
                     .padding(.horizontal, 9)
                     .padding(.vertical, 5)
-                    .background(.white.opacity(0.12), in: Capsule())
+                    .background(DS.Color.surfaceHigh, in: Capsule())
             }
 
             if sheetPosition != .collapsed || sheetHeight > 225 {
@@ -366,11 +390,25 @@ struct FeedView: View {
         .clipped()
         .background(
             UnevenRoundedRectangle(topLeadingRadius: isFullEnough ? 0 : 26, topTrailingRadius: isFullEnough ? 0 : 26)
-                .fill(.black.opacity(isFullEnough ? 0.97 : 0.88))
-                .shadow(color: .black.opacity(0.45), radius: 24, y: -8)
+                .fill(DS.Color.surface.opacity(isFullEnough ? 0.98 : 0.92))
+                .shadow(color: .black.opacity(colorScheme == .dark ? 0.45 : 0.16), radius: 24, y: -8)
         )
         .gesture(sheetDrag(availableHeight: availableHeight))
         .animation(.snappy, value: sheetPosition)
+    }
+
+    private func toggleMapExploreMode() {
+        withAnimation(.snappy) {
+            if isMapExploreMode {
+                isMapExploreMode = false
+                sheetPosition = sheetPositionBeforeMapExplore
+            } else {
+                sheetPositionBeforeMapExplore = sheetPosition
+                isMapExploreMode = true
+                isShowingSearch = false
+                sheetPosition = .collapsed
+            }
+        }
     }
 
     private func sheetDrag(availableHeight: CGFloat) -> some Gesture {
@@ -421,7 +459,7 @@ struct FeedView: View {
                 CategoryChip(
                     title: "All",
                     icon: "circle.grid.2x2.fill",
-                    color: .white,
+                    color: DS.Color.textSecondary,
                     isSelected: selectedCategory == nil
                 ) {
                     selectedCategory = nil
@@ -467,14 +505,14 @@ private struct FeedMapPin: View {
                 .frame(width: incident.isHighRisk ? 96 : 70, height: incident.isHighRisk ? 96 : 70)
 
             Circle()
-                .fill(.black.opacity(0.86))
+                .fill(DS.Color.surface.opacity(0.94))
                 .frame(width: 42, height: 42)
                 .overlay(Circle().stroke(incident.severity.tint, lineWidth: 3))
                 .shadow(color: incident.severity.tint.opacity(0.75), radius: 14)
 
             Image(systemName: incident.subtype.icon)
                 .font(.system(size: 18, weight: .heavy))
-                .foregroundStyle(.white)
+                .foregroundStyle(DS.Color.textPrimary)
         }
     }
 }
@@ -482,18 +520,21 @@ private struct FeedMapPin: View {
 private struct IconCircleButton: View {
     var icon: String
     var accessibilityLabel: String
+    var isActive: Bool = false
     var action: () -> Void
 
     var body: some View {
         Button(action: action) {
             Image(systemName: icon)
                 .font(.headline)
-                .foregroundStyle(.white)
+                .foregroundStyle(isActive ? .white : DS.Color.textPrimary)
                 .frame(width: 38, height: 38)
-                .background(.black.opacity(0.54), in: Circle())
+                .background(isActive ? DS.Color.accent : DS.Color.surface.opacity(0.88), in: Circle())
+                .overlay(Circle().stroke(isActive ? DS.Color.accent.opacity(0.55) : DS.Color.hairline, lineWidth: 1))
         }
         .buttonStyle(.plain)
         .accessibilityLabel(accessibilityLabel)
+        .accessibilityAddTraits(isActive ? [.isSelected] : [])
     }
 }
 
@@ -503,19 +544,19 @@ private struct FeedSearchField: View {
     var body: some View {
         HStack(spacing: 9) {
             Image(systemName: "magnifyingglass")
-                .foregroundStyle(.white.opacity(0.58))
+                .foregroundStyle(DS.Color.textTertiary)
 
             TextField("Search incidents, areas, or types", text: $searchText)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
-                .foregroundStyle(.white)
+                .foregroundStyle(DS.Color.textPrimary)
 
             if !searchText.isEmpty {
                 Button {
                     searchText = ""
                 } label: {
                     Image(systemName: "xmark.circle.fill")
-                        .foregroundStyle(.white.opacity(0.58))
+                        .foregroundStyle(DS.Color.textTertiary)
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Clear search")
@@ -523,7 +564,11 @@ private struct FeedSearchField: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-        .background(.white.opacity(0.10), in: RoundedRectangle(cornerRadius: 13))
+        .background(DS.Color.surfaceHigh, in: RoundedRectangle(cornerRadius: 13))
+        .overlay(
+            RoundedRectangle(cornerRadius: 13)
+                .stroke(DS.Color.hairline, lineWidth: 1)
+        )
     }
 }
 
@@ -542,14 +587,14 @@ private struct ScopeSelector: View {
                         .lineLimit(1)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 9)
-                        .background(selectedScope == scope ? .white.opacity(0.16) : .clear, in: RoundedRectangle(cornerRadius: 10))
+                        .background(selectedScope == scope ? DS.Color.accent.opacity(0.16) : .clear, in: RoundedRectangle(cornerRadius: 10))
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(selectedScope == scope ? .white : .white.opacity(0.58))
+                .foregroundStyle(selectedScope == scope ? DS.Color.textPrimary : DS.Color.textTertiary)
             }
         }
         .padding(5)
-        .background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 14))
+        .background(DS.Color.surfaceHigh, in: RoundedRectangle(cornerRadius: 14))
     }
 }
 
@@ -579,23 +624,23 @@ private struct IncidentCard: View {
                 VStack(alignment: .leading, spacing: 5) {
                     HStack(spacing: 7) {
                         Text(distanceText)
-                            .foregroundStyle(.white.opacity(0.86))
+                            .foregroundStyle(DS.Color.textSecondary)
                         Text("•")
-                            .foregroundStyle(.white.opacity(0.38))
+                            .foregroundStyle(DS.Color.textTertiary)
                         Text(incident.reportedAt, style: .relative)
-                            .foregroundStyle(.white.opacity(0.60))
+                            .foregroundStyle(DS.Color.textTertiary)
                     }
                     .font(DS.Font.caption())
                     .fontWeight(.heavy)
 
                     Text(incident.title)
                         .font(DS.Font.cardTitle())
-                        .foregroundStyle(.white)
+                        .foregroundStyle(DS.Color.textPrimary)
                         .lineLimit(2)
 
                     Text(incident.neighborhood)
                         .font(DS.Font.caption())
-                        .foregroundStyle(.white.opacity(0.58))
+                        .foregroundStyle(DS.Color.textTertiary)
                 }
 
                 Spacer()
@@ -604,18 +649,18 @@ private struct IncidentCard: View {
             }
 
             HStack(spacing: DS.Space.sm) {
-                InfoPill(icon: incident.confidence.icon, title: incident.confidence.rawValue, color: incident.confidence.color)
-                InfoPill(icon: "eye.fill", title: "\(incident.confirmations)", color: .white.opacity(0.72))
+                InfoPill(icon: incident.confidence.icon, title: incident.confidenceLabel, color: incident.confidence.color)
+                InfoPill(icon: "eye.fill", title: "\(incident.confirmations)", color: DS.Color.textSecondary)
                 if incident.isHighRisk {
                     InfoPill(icon: "bell.fill", title: "Alert sent", color: DS.Color.alert)
                 }
             }
         }
         .padding(DS.Space.md)
-        .background(.white.opacity(0.09), in: RoundedRectangle(cornerRadius: DS.Radius.lg, style: .continuous))
+        .background(DS.Color.surfaceHigh, in: RoundedRectangle(cornerRadius: DS.Radius.lg, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: DS.Radius.lg, style: .continuous)
-                .stroke(.white.opacity(0.08), lineWidth: 1)
+                .stroke(DS.Color.hairline, lineWidth: 1)
         )
     }
 }
@@ -645,14 +690,14 @@ private struct EmptyFeedState: View {
                 .foregroundStyle(DS.Color.positive)
             Text("Nothing active here")
                 .font(DS.Font.cardTitle())
-                .foregroundStyle(.white)
+                .foregroundStyle(DS.Color.textPrimary)
             Text("Try another filter or category.")
                 .font(DS.Font.caption())
-                .foregroundStyle(.white.opacity(0.56))
+                .foregroundStyle(DS.Color.textSecondary)
         }
         .frame(maxWidth: .infinity)
         .padding(28)
-        .background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 16))
+        .background(DS.Color.surfaceHigh, in: RoundedRectangle(cornerRadius: 16))
     }
 }
 

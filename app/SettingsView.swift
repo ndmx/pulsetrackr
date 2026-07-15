@@ -7,7 +7,6 @@ struct SettingsView: View {
     @AppStorage(AppStorageKey.watchRadius) private var watchRadius = 3.0
     @AppStorage(AppStorageKey.urgentAlerts) private var urgentAlerts = true
     @AppStorage(AppStorageKey.communityAlerts) private var communityAlerts = true
-    @AppStorage(AppStorageKey.useApproximateLocation) private var useApproximateLocation = true
     @AppStorage(AppStorageKey.lightModeEnabled) private var lightModeEnabled = false
 
     // watchRadius is stored canonically in km; display it in the user's locale unit.
@@ -25,8 +24,7 @@ struct SettingsView: View {
                 appearanceSection
                 alertsSection
                 sosSection
-                privacySection
-                statusSection
+                statusLinkSection
             }
             .padding(DS.Space.lg)
             .padding(.bottom, DS.Space.xl)
@@ -115,36 +113,6 @@ struct SettingsView: View {
         .pulsePanel()
     }
 
-    private var privacySection: some View {
-        VStack(alignment: .leading, spacing: DS.Space.md) {
-            SettingsSectionHeader(title: "Privacy")
-
-            SettingsToggleRow(
-                icon: "location.slash.fill",
-                color: DS.Color.textSecondary,
-                label: "Hide exact report location",
-                description: "Public incident pins are fuzzed to a nearby area",
-                isOn: $useApproximateLocation
-            )
-
-            Divider()
-                .overlay(DS.Color.hairline)
-
-            PrecisionLocationRow(
-                title: preciseLocationTitle,
-                detail: preciseLocationDetail,
-                color: preciseLocationColor,
-                showsSettingsButton: preciseLocationNeedsSettings
-            )
-
-            Text("During SOS, exact location is shared with your trusted contacts only after you activate it. PulseTrackr does not automatically contact police, ambulance, or emergency services.")
-                .font(DS.Font.caption())
-                .foregroundStyle(DS.Color.textSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .pulsePanel()
-    }
-
     private var sosSection: some View {
         VStack(alignment: .leading, spacing: DS.Space.md) {
             SettingsSectionHeader(title: "SOS")
@@ -176,16 +144,111 @@ struct SettingsView: View {
                 }
             }
             .buttonStyle(.plain)
+        }
+        .pulsePanel()
+    }
 
-            Divider()
-                .overlay(DS.Color.hairline)
+    private var statusLinkSection: some View {
+        VStack(alignment: .leading, spacing: DS.Space.md) {
+            SettingsSectionHeader(title: "Status")
 
+            NavigationLink {
+                SettingsStatusView()
+            } label: {
+                HStack(spacing: DS.Space.md) {
+                    Image(systemName: "checkmark.shield.fill")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(DS.Color.positive)
+                        .frame(width: 36, height: 36)
+                        .background(DS.Color.positive.opacity(0.14), in: RoundedRectangle(cornerRadius: DS.Radius.sm, style: .continuous))
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Status")
+                            .font(DS.Font.bodyStrong())
+                            .foregroundStyle(DS.Color.textPrimary)
+                        Text("Privacy, app health, and SOS upload details")
+                            .font(DS.Font.caption())
+                            .foregroundStyle(DS.Color.textSecondary)
+                    }
+
+                    Spacer()
+
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(DS.Color.textTertiary)
+                }
+            }
+            .buttonStyle(.plain)
+        }
+        .pulsePanel()
+    }
+
+    private var sosContactsDescription: String {
+        if sosStore.activeTrustedContacts.isEmpty {
+            return "Add people before travel"
+        }
+        return "\(sosStore.activeTrustedContacts.count) ready for trusted-contact alerts"
+    }
+
+}
+
+private struct SettingsStatusView: View {
+    @EnvironmentObject private var locationManager: LocationManager
+    @EnvironmentObject private var sosStore: SOSStore
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: DS.Space.lg) {
+                sosUploadSection
+                privacySection
+                appStatusSection
+            }
+            .padding(DS.Space.lg)
+            .padding(.bottom, DS.Space.xl)
+        }
+        .background(DS.Color.background)
+        .navigationTitle("Status")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private var sosUploadSection: some View {
+        VStack(alignment: .leading, spacing: DS.Space.md) {
+            SettingsSectionHeader(title: "SOS upload")
             StatusRow(icon: "tray.and.arrow.up.fill", label: sosStore.uploadStatusText, color: sosStatusColor)
         }
         .pulsePanel()
     }
 
-    private var statusSection: some View {
+    private var privacySection: some View {
+        VStack(alignment: .leading, spacing: DS.Space.md) {
+            SettingsSectionHeader(title: "Privacy")
+
+            StatusRow(icon: "location.slash.fill", label: "Exact report locations protected", color: DS.Color.positive)
+
+            Text("Your exact report point stays private. Public map pins show only a nearby general area once enough reports confirm it.")
+                .font(DS.Font.caption())
+                .foregroundStyle(DS.Color.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Divider()
+                .overlay(DS.Color.hairline)
+
+            PrecisionLocationRow(
+                title: preciseLocationTitle,
+                detail: preciseLocationDetail,
+                color: preciseLocationColor,
+                showsSettingsButton: preciseLocationNeedsSettings
+            )
+
+            Text("During SOS, exact location is shared with trusted contacts only after you activate it. PulseTrackr does not automatically contact emergency services.")
+                .font(DS.Font.caption())
+                .foregroundStyle(DS.Color.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .pulsePanel()
+    }
+
+    private var appStatusSection: some View {
         VStack(alignment: .leading, spacing: DS.Space.md) {
             SettingsSectionHeader(title: "App status")
 
@@ -196,13 +259,6 @@ struct SettingsView: View {
             }
         }
         .pulsePanel()
-    }
-
-    private var sosContactsDescription: String {
-        if sosStore.activeTrustedContacts.isEmpty {
-            return "Add people before travel"
-        }
-        return "\(sosStore.activeTrustedContacts.count) ready for trusted-contact alerts"
     }
 
     private var sosStatusColor: Color {

@@ -5,12 +5,14 @@ enum SOSTrustedContactChannel: String, Codable, CaseIterable, Hashable {
     case sms
     case phoneCall = "phone_call"
     case email
+    case appPush = "app_push"
 
     var label: String {
         switch self {
         case .sms: "SMS"
         case .phoneCall: "Call"
         case .email: "Email"
+        case .appPush: "App"
         }
     }
 
@@ -19,6 +21,7 @@ enum SOSTrustedContactChannel: String, Codable, CaseIterable, Hashable {
         case .sms: "message.fill"
         case .phoneCall: "phone.fill"
         case .email: "envelope.fill"
+        case .appPush: "app.badge.fill"
         }
     }
 }
@@ -29,6 +32,9 @@ struct SOSTrustedContact: Identifiable, Codable, Equatable {
     var relationshipLabel: String?
     var phoneNumber: String?
     var emailAddress: String?
+    var appUserUID: String?
+    var appRelationshipID: String?
+    var appInviteAcceptedAt: Date?
     var notificationChannels: Set<SOSTrustedContactChannel>
     var consentedAt: Date?
     var lastNotifiedAt: Date?
@@ -41,6 +47,9 @@ struct SOSTrustedContact: Identifiable, Codable, Equatable {
         relationshipLabel: String? = nil,
         phoneNumber: String? = nil,
         emailAddress: String? = nil,
+        appUserUID: String? = nil,
+        appRelationshipID: String? = nil,
+        appInviteAcceptedAt: Date? = nil,
         notificationChannels: Set<SOSTrustedContactChannel> = [.sms],
         consentedAt: Date? = nil,
         lastNotifiedAt: Date? = nil,
@@ -50,8 +59,11 @@ struct SOSTrustedContact: Identifiable, Codable, Equatable {
         self.id = id
         self.displayName = displayName.trimmedForSOS
         self.relationshipLabel = relationshipLabel?.nilIfBlankForSOS
-        self.phoneNumber = phoneNumber?.nilIfBlankForSOS
+        self.phoneNumber = phoneNumber?.normalizedPhoneNumberForSOS
         self.emailAddress = emailAddress?.nilIfBlankForSOS?.lowercased()
+        self.appUserUID = appUserUID?.nilIfBlankForSOS
+        self.appRelationshipID = appRelationshipID?.nilIfBlankForSOS
+        self.appInviteAcceptedAt = appInviteAcceptedAt
         self.notificationChannels = notificationChannels
         self.consentedAt = consentedAt
         self.lastNotifiedAt = lastNotifiedAt
@@ -67,6 +79,8 @@ struct SOSTrustedContact: Identifiable, Codable, Equatable {
                     phoneNumber != nil
                 case .email:
                     emailAddress != nil
+                case .appPush:
+                    appUserUID != nil && appRelationshipID != nil
                 }
             }
             .sorted { $0.rawValue < $1.rawValue }
@@ -83,6 +97,8 @@ struct SOSTrustedContact: Identifiable, Codable, Equatable {
             relationshipLabel: relationshipLabel,
             phoneNumber: phoneNumber,
             emailAddress: emailAddress,
+            appUserUID: appUserUID,
+            appRelationshipID: appRelationshipID,
             channels: deliverableChannels,
             consentedAt: consentedAt
         )
@@ -108,12 +124,15 @@ struct SOSTrustedContact: Identifiable, Codable, Equatable {
         if let emailAddress {
             return emailAddress
         }
+        if appRelationshipID != nil {
+            return "PulseTrackr app"
+        }
         return "No alert route"
     }
 
     var channelSummary: String {
         let labels = deliverableChannels.map(\.label)
-        return labels.isEmpty ? "Needs phone or email" : labels.joined(separator: ", ")
+        return labels.isEmpty ? "Needs phone, email, or app invite" : labels.joined(separator: ", ")
     }
 }
 
@@ -123,6 +142,8 @@ struct SOSTrustedContactNotificationTarget: Codable, Equatable {
     var relationshipLabel: String?
     var phoneNumber: String?
     var emailAddress: String?
+    var appUserUID: String?
+    var appRelationshipID: String?
     var channels: [SOSTrustedContactChannel]
     var consentedAt: Date?
 
@@ -141,6 +162,12 @@ struct SOSTrustedContactNotificationTarget: Codable, Equatable {
         }
         if let emailAddress {
             payload["email_address"] = emailAddress
+        }
+        if let appUserUID {
+            payload["app_user_uid"] = appUserUID
+        }
+        if let appRelationshipID {
+            payload["app_relationship_id"] = appRelationshipID
         }
         if let consentedAt {
             payload["consented_at"] = SOSPayloadCoding.string(from: consentedAt)
@@ -164,6 +191,10 @@ struct SOSTrustedContactNotificationTarget: Codable, Equatable {
         }
         if emailAddress != nil {
             payload["has_email_address"] = true
+        }
+        if let appRelationshipID {
+            payload["app_relationship_id"] = appRelationshipID
+            payload["has_app_route"] = true
         }
         if let consentedAt {
             payload["consented_at"] = SOSPayloadCoding.string(from: consentedAt)
@@ -206,6 +237,7 @@ final class SOSTrustedContactStore {
         }
 
         return try decoder.decode([SOSTrustedContact].self, from: data)
+            .map(Self.normalized)
     }
 
     func saveContacts(_ contacts: [SOSTrustedContact]) throws {
@@ -264,6 +296,24 @@ final class SOSTrustedContactStore {
         }
     }
 
+    private static func normalized(_ contact: SOSTrustedContact) -> SOSTrustedContact {
+        SOSTrustedContact(
+            id: contact.id,
+            displayName: contact.displayName,
+            relationshipLabel: contact.relationshipLabel,
+            phoneNumber: contact.phoneNumber,
+            emailAddress: contact.emailAddress,
+            appUserUID: contact.appUserUID,
+            appRelationshipID: contact.appRelationshipID,
+            appInviteAcceptedAt: contact.appInviteAcceptedAt,
+            notificationChannels: contact.notificationChannels,
+            consentedAt: contact.consentedAt,
+            lastNotifiedAt: contact.lastNotifiedAt,
+            isActive: contact.isActive,
+            createdAt: contact.createdAt
+        )
+    }
+
     private var baseQuery: [String: Any] {
         [
             kSecClass as String: kSecClassGenericPassword,
@@ -286,5 +336,31 @@ private extension String {
     var nilIfBlankForSOS: String? {
         let trimmed = trimmedForSOS
         return trimmed.isEmpty ? nil : trimmed
+    }
+
+    var normalizedPhoneNumberForSOS: String? {
+        let trimmed = trimmedForSOS
+        guard !trimmed.isEmpty else { return nil }
+
+        let digits = trimmed.filter(\.isNumber)
+        guard !digits.isEmpty else { return nil }
+
+        if trimmed.hasPrefix("+") {
+            return "+\(digits)"
+        }
+
+        if digits.hasPrefix("00"), digits.count > 2 {
+            return "+\(digits.dropFirst(2))"
+        }
+
+        if digits.count == 11, digits.hasPrefix("1") {
+            return "+\(digits)"
+        }
+
+        if digits.count == 10, Locale.current.region?.identifier == "US" {
+            return "+1\(digits)"
+        }
+
+        return trimmed
     }
 }

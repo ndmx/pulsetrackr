@@ -13,7 +13,7 @@
 const { test, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const admin = require('firebase-admin');
-const { encodeGeohash } = require('../src/geohash');
+const { encodeGeohash } = require('../lib/geohash');
 
 const BASE32 = '0123456789bcdefghjkmnpqrstuvwxyz';
 const NEIGHBOUR_EVEN = {

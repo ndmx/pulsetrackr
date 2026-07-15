@@ -59,6 +59,18 @@ cd ..
 firebase deploy --only functions,firestore:rules,firestore:indexes,storage
 ```
 
+For the current split-codebase setup, prefer the explicit codebase deploy:
+
+```sh
+firebase deploy --only functions:pulsetrackr-sos,firestore:rules,firestore:indexes,storage --project pulsetracker-0000
+```
+
+The `processSosNotifications` Cloud Tasks function is deployed with retry/rate
+limits from `functions/src/shared/config.ts`. Enable the Cloud Tasks API in the
+Firebase project before first production deploy; terminal worker failures are
+written to `sos_notification_dlq_private` and reflected back onto the SOS session
+as `notificationSagaStatus = failed`.
+
 Without `GoogleService-Info.plist`, the iOS app starts with an empty incident list and should not attempt SOS remote calls. (Sample incidents exist only in `#if DEBUG` builds for SwiftUI previews — they are never shown in release builds.) Once the plist is present, it reads from `safety_incidents_public`, submits through the callable `submit_incident` Cloud Function, and can opt into the SOS callable contract below.
 
 ## Firebase Storage setup
@@ -87,24 +99,31 @@ Rules allow authenticated users to create image/audio files only under their own
 To scale across all App Store regions, the app does **not** stream every public
 incident worldwide. Instead:
 
-- **Write side** — `submit_incident` stores a standard geohash on each
-  `safety_incidents_public` doc via [`functions/src/geohash.js`](functions/src/geohash.js)
-  (`geohash` field, precision 9). This is byte-for-byte compatible with the client
-  encoder in `app/Geohash.swift`.
-- **Read side** — the client (`SafetyIncidentRemoteStore.observeIncidents(near:radiusMeters:)`)
-  picks a geohash precision sized to the user's watch radius, then attaches one
-  listener per covering cell (the cell containing the user plus its 8 neighbours)
-  as `geohash` prefix-range queries. Results are merged, filtered to the exact
-  radius + active statuses, and de-duplicated on the client. It re-subscribes when
-  the user moves >500 m or changes their watch radius.
-- **Index** — the query orders by the single `geohash` field, which Firestore
-  indexes automatically. No composite index is required, so `firestore.indexes.json`
-  needs no change for this feature.
-- **Backfill** — incidents written *before* this change have no `geohash` field and
-  will be skipped by geo-queries. Pre-launch this is typically a non-issue (the app
-  ships with no real public incidents). If you have existing public docs, run a
-  one-off backfill that reads each doc's `latitude`/`longitude` and sets
-  `geohash = encodeGeohash(lat, lng)` using the same module.
+- **Write side** — `submit_incident` stores exact latitude/longitude only in
+  `safety_reports_private`, computes private H3 cells, and reveals public location
+  only after the configured k-anonymity threshold is met. Revealed public incidents
+  get the H3 cell center, `public_h3_cell`, `public_h3_resolution`, and a standard
+  `geohash` via [`functions/src/geohash.js`](functions/src/geohash.js). The geohash
+  remains byte-for-byte compatible with the client encoder in `app/Geohash.swift`.
+- **Read side, current iOS listener** — the client
+  (`SafetyIncidentRemoteStore.observeIncidents(near:radiusMeters:)`) picks a geohash
+  precision sized to the user's watch radius, then attaches one listener per covering
+  cell (the cell containing the user plus its 8 neighbours) as `geohash` prefix-range
+  queries. Results are merged, filtered to the exact radius + active statuses, and
+  de-duplicated on the client. It re-subscribes when the user moves >500 m or changes
+  their watch radius.
+- **Read side, backend H3 query** — `query_incidents_h3` expands the user center and
+  radius into bounded resolution-8 and resolution-7 H3 cells, queries
+  `safety_incidents_public.public_h3_cell`, filters expired/resolved results, and
+  returns compact incident summaries plus query metadata.
+- **Indexes** — geohash listener reads use Firestore's single-field `geohash` index.
+  `query_incidents_h3` needs the composite `public_h3_cell/deleteAfter` index.
+  Private H3 reveal checks and counter shard reads are declared in
+  `firestore.indexes.json`; the rollup queue's `updatedAt` ordering uses Firestore's
+  normal single-field index with TTL declared as a field override.
+- **Backfill** — public docs without a revealed `geohash`/`public_h3_cell` are skipped
+  by geo-queries. Do not backfill old exact coordinates into the public feed; let TTL
+  expire them or migrate them through the H3 k-anonymity reveal policy.
 
 The geohash encoder/neighbour logic is unit-tested on both sides
 (`pulsetrackrTests/GeohashTests.swift`, `functions/test/geohash.test.js`). The
@@ -122,6 +141,11 @@ asserts the 3 km query returns only the nearby active incidents, the 15 km query
 pulls in the edge incident, and another continent / resolved incidents are always
 excluded. Requires the Firebase CLI and a JRE (for the Firestore emulator).
 
+Counter writes are also scaled: `record_incident_signal` writes to private sharded
+counter documents, and the scheduled `rollupIncidentCounters` function projects the
+totals back to `safety_incidents_public` every five minutes. Public counter fields are
+therefore eventually consistent by design.
+
 ## Production notification secrets
 
 The SOS backend has real provider adapters, but no secrets are committed. Configure these in Firebase Functions before live deployment:
@@ -130,24 +154,27 @@ The SOS backend has real provider adapters, but no secrets are committed. Config
 firebase functions:secrets:set TWILIO_ACCOUNT_SID
 firebase functions:secrets:set TWILIO_API_KEY_SID
 firebase functions:secrets:set TWILIO_API_KEY_SECRET
+firebase functions:secrets:set TWILIO_AUTH_TOKEN
 firebase functions:secrets:set TWILIO_FROM_NUMBER
-firebase functions:secrets:set SENDGRID_API_KEY
-firebase functions:secrets:set SENDGRID_FROM_EMAIL
+firebase functions:secrets:set TWILIO_EMAIL_FROM_ADDRESS
+firebase functions:secrets:set SOS_ENVELOPE_KEK
 ```
 
-For local emulator testing, copy `functions/.secret.example` values into the private ignored `functions/.secret.local`; copy `functions/.env.example` into `functions/.env.local` only for non-secret local overrides such as `TWILIO_VOICE_TWIML` or `SENDGRID_FROM_NAME`. Never commit provider credentials. `TWILIO_AUTH_TOKEN` remains supported only as a local migration fallback; production should use `TWILIO_API_KEY_SID` and `TWILIO_API_KEY_SECRET`.
+`SOS_ENVELOPE_KEK` must be a base64 or hex encoded 32-byte key. Generate it with `openssl rand -base64 32` and rotate by adding a new Secret Manager version, updating `SOS_ENVELOPE_KEY_VERSION`, deploying, verifying decrypt/release, then disabling old versions after the SOS retention window.
+
+For local emulator testing, copy `functions/.secret.example` values into the private ignored `functions/.secret.local`; copy `functions/.env.example` into `functions/.env.local` only for non-secret local overrides such as `TWILIO_VOICE_TWIML`, `TWILIO_EMAIL_FROM_NAME`, `TWILIO_WEBHOOK_PUBLIC_URL`, H3/k-anonymity policy values, or `SOS_ENVELOPE_KEY_VERSION`. Never commit provider credentials. `TWILIO_AUTH_TOKEN` is required for validating Twilio inbound STOP/START webhooks; production sends should use `TWILIO_API_KEY_SID` and `TWILIO_API_KEY_SECRET`.
 
 Delivery behavior:
 
 - `sms` and `phone_call` use Twilio.
-- `email` uses SendGrid.
+- `email` uses Twilio Comms Email.
 - If a provider is not configured, the backend writes `provider_unconfigured` to `sos_notification_attempts_private` instead of pretending the alert was sent.
 - If a provider returns an error, the attempt is marked `failed` with a capped error message for operations review.
+- If a trusted contact replies `STOP`, `CANCEL`, `END`, `QUIT`, `UNSUBSCRIBE`, `STOPALL`, `OPTOUT`, or `REVOKE`, configure Twilio to POST inbound messages to `twilio_sms_webhook`. The backend validates Twilio's signature, records a private phone-hash opt-out, skips future SOS SMS to that number, and returns the opted-out contact id so the app can tell the user.
 
 Provider-specific setup:
 
-- Twilio SMS/voice: configure `TWILIO_ACCOUNT_SID`, `TWILIO_API_KEY_SID`, `TWILIO_API_KEY_SECRET`, and `TWILIO_FROM_NUMBER`.
-- SendGrid email: see `SENDGRID_SETUP.md` for sender verification, Mail Send API key permissions, and local/Firebase secret setup.
+- Twilio SMS/voice/email: configure `TWILIO_ACCOUNT_SID`, `TWILIO_API_KEY_SID`, `TWILIO_API_KEY_SECRET`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM_NUMBER`, and `TWILIO_EMAIL_FROM_ADDRESS`.
 - App Check: see `APP_CHECK_SETUP.md` for iOS provider setup, debug token handling, and Firebase-side registration.
 
 ## Local emulator setup
@@ -169,15 +196,25 @@ Production callable functions enforce Firebase App Check by default. The emulato
 ## Firestore collections
 
 - `safety_reports_private`: exact raw reports, server-only.
-- `safety_incidents_public`: public map/feed incidents, readable by clients.
+- `safety_incidents_public`: public map/feed incidents, readable by clients. Public coordinates/geohashes are omitted until the H3 k-anonymity threshold is met; once revealed, the coordinate is the H3 cell center, not the exact report point.
 - `safety_incident_signals`: reserved for the next milestone.
-- `sos_sessions_private`: active and resolved SOS session records, server-only. Stores exact locations, recent trail snapshots, trusted-contact notification targets, redacted trusted-contact summaries, device/network metadata, status, activation/resolution timestamps, TTL, and access-expiry timestamps.
-- `sos_location_updates_private`: append-only live SOS location updates keyed by `session_id` + `sequence_number`, server-only, with TTL cleanup after retention expires.
-- `sos_notification_attempts_private`: trusted-contact notification attempts. The backend writes queued attempts, tries Twilio/SendGrid delivery when configured, then updates each record with `sent`, `failed`, or `provider_unconfigured`.
+- `safety_incident_counter_shards_private`: server-only sharded write path for community signal counters.
+- `safety_incident_counter_rollup_queue_private`: server-only queue documents telling `rollupIncidentCounters` which incidents need public counter projection.
+- `safety_incident_counter_rollups_private`: server-only rollup snapshots for counter operations review.
+- `sos_sessions_private`: active and resolved SOS session records, server-only. Stores encrypted exact location/trail/final-location blobs, trusted-contact notification targets, redacted trusted-contact summaries, device/network metadata, status, activation/resolution timestamps, TTL, and access-expiry timestamps.
+- `sos_location_updates_private`: append-only encrypted live SOS location updates keyed by `session_id` + `sequence_number`, server-only, with TTL cleanup after retention expires.
+- `sos_notification_attempts_private`: trusted-contact notification attempts. The backend writes queued attempts, tries Twilio SMS, voice, or Comms Email delivery when configured, then updates each record with `sent`, `failed`, or `provider_unconfigured`.
+- `sos_app_trusted_contact_invites_private`: short-lived one-way app trusted-contact invite records. These are server-only; clients get a one-time invite code from the callable and cannot read invite records directly.
+- `sos_app_trusted_contacts_private`: accepted one-way app trusted-contact relationships. `ownerUid -> trustedContactUid` means the owner's SOS may alert the trusted contact; the reverse direction requires a separate invite and acceptance.
+- `sos_app_alerts_private`: app-visible SOS alerts for accepted app trusted contacts. A signed-in client may read only records where `recipientUid == request.auth.uid`; writes stay server-only.
 - `sos_idempotency_private`: maps user + `client_session_id` to the canonical server `session_id`.
 - `sos_rate_limits_private`: per-user activation windows and cooldowns.
 - `sos_access_grants_private`: short-lived privileged access grants for authorized responder/admin workflows.
-- `sos_access_audit`: append-only audit events for admin, care-team, and law-enforcement access attempts.
+- `sos_law_enforcement_requests_private`: company-controlled intake and review records for legal requests tied to a specific SOS session. Stores requester/agency metadata, legal process reference, requested/approved scope, review decision, and expiry. It does not expose location by itself.
+- `sos_access_audit`: hash-chained, append-only audit events for admin, care-team, and law-enforcement access attempts. Audit reads are limited to internal `sosAdmin`/`careTeam` claims.
+- `sos_access_audit_chain_heads`: server-only audit chain head documents.
+- `sos_disclosure_key_releases_private`: server-only ledger records binding a disclosure/key-release to a grant and audit hash.
+- `sos_role_claim_grants_private`: server-only audited custom-claim grant/revoke ledger.
 
 ## SOS callable functions
 
@@ -195,7 +232,7 @@ Server behavior:
 - Rate-limits activation per user with a short cooldown and hourly window.
 - Caps recent trail sharing again on the server, even if the client sends more.
 - Writes a private SOS session, idempotency record, audit event, and notification attempts.
-- Attempts Twilio/SendGrid delivery after the session transaction commits, then updates notification status and the session `notificationSummary`.
+- Attempts Twilio SMS, voice, or Comms Email delivery after the session transaction commits, creates app alerts for accepted one-way app trusted contacts, then updates notification status and the session `notificationSummary`.
 
 Request fields:
 
@@ -212,7 +249,51 @@ Response fields:
 
 - `session_id`: server canonical session id.
 - `trusted_contacts_notified`: contact UUID strings accepted for notification attempt.
+- `app_trusted_contacts_notified`: accepted app relationship ids that received an in-app SOS alert record.
 - `expires_at`: ISO-8601 timestamp when active-session privileged access expires unless renewed by policy.
+
+### `create_app_trusted_contact_invite`
+
+Creates a short-lived one-way invite code that another PulseTrackr user can accept.
+
+Request fields:
+
+- `owner_display_name`: the name the invited trusted contact should see for the person asking.
+
+Response fields:
+
+- `invite_id`: server invite record id.
+- `invite_code`: human-shareable code. Store or display this only to the owner; the backend stores a hash-derived id, not plaintext reusable codes.
+- `expires_at`: ISO-8601 expiry, currently three days after creation.
+
+### `accept_app_trusted_contact_invite`
+
+Accepts someone else's invite and creates an accepted one-way app relationship.
+
+Request fields:
+
+- `invite_code`: code produced by `create_app_trusted_contact_invite`.
+- `trusted_contact_display_name`: the accepting user's name as shown to the owner.
+
+Server behavior:
+
+- Requires Firebase Auth/App Check.
+- Refuses missing, expired, already-used, or self-issued invites.
+- Writes `sos_app_trusted_contacts_private` as `ownerUid -> trustedContactUid`.
+- Does not create the reverse direction. If B wants A to receive B's SOS alerts, B must create an invite and A must accept it.
+
+### `list_app_trusted_contacts`
+
+Returns accepted one-way relationships for the signed-in user.
+
+Response fields:
+
+- `outgoing`: people whose app can receive this user's SOS alerts.
+- `incoming`: people whose SOS alerts can appear in this user's app.
+
+### `revoke_app_trusted_contact`
+
+Revokes an accepted app trusted-contact relationship. Either side can revoke it by sending `relationship_id`.
 
 ### `append_sos_location`
 
@@ -224,6 +305,7 @@ Server behavior:
 - Requires session ownership, active status, and unexpired access window.
 - Uses `session_id + sequence_number` as an idempotent update key.
 - Updates the session last-known position and writes an append-only update record.
+- Updates any app-visible SOS alerts for accepted one-way app trusted contacts.
 
 Request fields:
 
@@ -262,14 +344,60 @@ Request fields:
 
 - `session_id`
 - `reason`: human-readable incident/case reason for audit.
+- `legal_request_id`: required when the caller has the `lawEnforcement` claim. The referenced request must be approved, unexpired, and tied to the same `session_id`.
 
 Server behavior:
 
 - Requires Firebase Auth/App Check.
 - Requires one of these custom claims: `sosAdmin`, `careTeam`, or `lawEnforcement`.
 - Rejects inactive, expired, or missing sessions.
+- For `lawEnforcement`, rejects access unless a company admin has approved a matching legal request record.
 - Creates a short-lived access grant, writes `sos_access_audit`, and returns last known location, direction of travel, and redacted trusted-contact summaries.
 - Does not return full trusted-contact destinations through this endpoint.
+
+### `record_law_enforcement_request`
+
+Records an incoming legal/emergency disclosure request without returning location data.
+
+Request fields:
+
+- `session_id`
+- `agency_name`
+- `requester_name`
+- `requester_title`, `requester_email`, `requester_phone`
+- `legal_process_type`: `warrant`, `court_order`, `subpoena`, `emergency_disclosure_request`, or `other`
+- `legal_reference`: case, warrant, order, or document number/reference
+- `document_reference`: internal document-storage reference, if available
+- `requested_scope`: one or more of `last_known_location`, `direction_of_travel`, `redacted_trusted_contacts`, `recent_trail`
+- `urgency`, `notes`, `received_at`
+
+Server behavior:
+
+- Requires Firebase Auth/App Check.
+- Requires `sosAdmin` or `careTeam`.
+- Stores the request in `sos_law_enforcement_requests_private` with `pending` status and whether the referenced SOS session was active at intake.
+- Writes `sos_access_audit`.
+- Does not disclose any exact location.
+
+### `review_law_enforcement_request`
+
+Approves or denies a recorded legal request.
+
+Request fields:
+
+- `legal_request_id`
+- `decision`: `approved` or `denied`
+- `review_note`
+- `approved_scope`: optional reviewed disclosure scope
+- `expires_at`: optional approval expiry, capped by the active SOS session expiry and a one-hour server maximum
+
+Server behavior:
+
+- Requires Firebase Auth/App Check.
+- Requires `sosAdmin`.
+- Refuses approval if the SOS session is missing, resolved, or expired.
+- Writes the decision and expiry back to `sos_law_enforcement_requests_private`.
+- Writes `sos_access_audit`.
 
 ## Admin and law-enforcement access
 
@@ -277,14 +405,17 @@ SOS data contains exact live location and trusted-contact information. Access mu
 
 - Do not expose `sos_sessions_private` or `sos_location_updates_private` to client Firestore reads.
 - Require a privileged backend function or admin console role for access.
+- Require a recorded and approved `sos_law_enforcement_requests_private` record before any `lawEnforcement` role receives exact location.
 - Verify the session is active before returning exact live SOS data.
 - Return only the minimum fields needed for the request.
-- Write every access attempt to `sos_access_audit` with actor id, role, reason, session id, timestamp, decision, and expiry.
+- Write every access attempt to hash-chained `sos_access_audit` with actor id, role, reason, session id, timestamp, decision, expiry, previous hash, sequence, and event hash.
 - Do not claim or trigger automatic law-enforcement dispatch from the iOS app. The backend may provide audited, time-limited access for authorized responders during an active SOS session.
 
 ## Privileged access claims
 
-Responder/admin access is controlled with Firebase Auth custom claims. Use a service account with Auth admin permissions:
+Responder/admin access is controlled with Firebase Auth custom claims. For normal operations, use the audited callable `mint_sos_role_claim` / `revoke_sos_role_claim` from an authenticated `sosAdmin` account with a target uid, role, reason, and expiry. The backend writes `sos_role_claim_grants_private` and a chained audit record.
+
+The local script remains for bootstrap/break-glass work with a service account:
 
 ```sh
 cd /Users/ndmx0/Codehub/DEV/pulsetrackr/functions

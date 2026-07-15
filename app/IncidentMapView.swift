@@ -10,19 +10,10 @@ struct IncidentMapView: View {
     @AppStorage(AppStorageKey.communityAlerts) private var communityAlerts = true
     @State private var hasCenteredOnUser = false
     @State private var selectedIncident: Incident?
+    @State private var isShowingLocationRationale = false
     @State private var cameraPosition: MapCameraPosition = MapDefaults.initialRegion(
         citySpan: MKCoordinateSpan(latitudeDelta: 0.055, longitudeDelta: 0.055)
     )
-
-    /// Show the prompt only when there's nothing to center on and location won't
-    /// arrive without user action (undetermined/denied). If authorized, a fix is
-    /// already on the way, so we stay quiet.
-    private var needsLocationPrompt: Bool {
-        locationManager.currentCoordinate == nil
-            && LocationManager.lastKnownCoordinate == nil
-            && locationManager.authorizationStatus != .authorizedWhenInUse
-            && locationManager.authorizationStatus != .authorizedAlways
-    }
 
     private var visibleIncidents: [Incident] {
         incidentStore.nearbyIncidents(
@@ -36,7 +27,9 @@ struct IncidentMapView: View {
     var body: some View {
         ZStack(alignment: .bottom) {
             Map(position: $cameraPosition) {
-                UserAnnotation()
+                if isLocationAuthorized {
+                    UserAnnotation()
+                }
 
                 if sosStore.trail.count > 1 {
                     MapPolyline(coordinates: sosStore.trail.map(\.coordinate))
@@ -76,7 +69,6 @@ struct IncidentMapView: View {
             }
             .mapStyle(.hybrid(elevation: .realistic))
             .mapControls {
-                MapUserLocationButton()
                 MapCompass()
                 MapScaleView()
             }
@@ -85,22 +77,34 @@ struct IncidentMapView: View {
 
             mapShade
 
+            mapLocateButton
             mapSummary
             SOSOverlayView()
         }
-        .overlay(alignment: .top) {
-            if needsLocationPrompt {
-                LocationPromptCard(
+        .overlay(alignment: .center) {
+            if isShowingLocationRationale {
+                Color.black.opacity(0.38)
+                    .ignoresSafeArea()
+                    .transition(.opacity)
+                    .onTapGesture {
+                        withAnimation(.snappy) {
+                            isShowingLocationRationale = false
+                        }
+                    }
+
+                LocationPermissionRationaleCard(
                     status: locationManager.authorizationStatus,
-                    onRequestPermission: { locationManager.requestCurrentLocation() }
+                    onRequestPermission: requestMapLocation,
+                    onDismiss: dismissLocationRationale
                 )
-                .padding()
+                .padding(32)
+                .transition(.scale(scale: 0.96).combined(with: .opacity))
             }
         }
         .navigationTitle("Live Map")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
-            locationManager.requestCurrentLocation()
+            locationManager.refreshCurrentLocationIfAuthorized()
         }
         .onReceive(locationManager.$currentCoordinate) { coordinate in
             guard let coordinate, !hasCenteredOnUser else { return }
@@ -116,6 +120,11 @@ struct IncidentMapView: View {
         }
     }
 
+    private var isLocationAuthorized: Bool {
+        locationManager.authorizationStatus == .authorizedWhenInUse
+            || locationManager.authorizationStatus == .authorizedAlways
+    }
+
     private var mapShade: some View {
         LinearGradient(
             colors: [
@@ -128,6 +137,31 @@ struct IncidentMapView: View {
         )
         .ignoresSafeArea()
         .allowsHitTesting(false)
+    }
+
+    private var mapLocateButton: some View {
+        VStack {
+            HStack {
+                Spacer()
+                Button(action: focusOnUserLocation) {
+                    Image(systemName: "location.viewfinder")
+                        .font(.headline)
+                        .foregroundStyle(.white)
+                        .frame(width: 44, height: 44)
+                        .background(.black.opacity(0.42), in: Circle())
+                        .overlay(
+                            Circle()
+                                .stroke(.white.opacity(0.12), lineWidth: 1)
+                        )
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Use my location on the map")
+            }
+            .padding(.horizontal, 18)
+            .padding(.top, 12)
+
+            Spacer()
+        }
     }
 
     private var mapSummary: some View {
@@ -203,6 +237,42 @@ struct IncidentMapView: View {
             "Enable location"
         @unknown default:
             "Nearby activity"
+        }
+    }
+
+    private func focusOnUserLocation() {
+        switch locationManager.authorizationStatus {
+        case .notDetermined, .denied, .restricted:
+            withAnimation(.snappy) {
+                isShowingLocationRationale = true
+            }
+        case .authorizedAlways, .authorizedWhenInUse:
+            requestMapLocation()
+            if let coordinate = locationManager.currentCoordinate ?? LocationManager.lastKnownCoordinate {
+                withAnimation(.easeInOut(duration: 0.6)) {
+                    cameraPosition = .region(
+                        MKCoordinateRegion(
+                            center: coordinate,
+                            span: MKCoordinateSpan(latitudeDelta: 0.05, longitudeDelta: 0.05)
+                        )
+                    )
+                }
+            }
+        @unknown default:
+            withAnimation(.snappy) {
+                isShowingLocationRationale = true
+            }
+        }
+    }
+
+    private func requestMapLocation() {
+        dismissLocationRationale()
+        locationManager.requestCurrentLocation()
+    }
+
+    private func dismissLocationRationale() {
+        withAnimation(.snappy) {
+            isShowingLocationRationale = false
         }
     }
 }
@@ -289,7 +359,7 @@ private struct FeaturedIncidentCard: View {
                         .textCase(.uppercase)
                         .fontWeight(.heavy)
                         .foregroundStyle(incident.category.color)
-                    Text(incident.confidence.rawValue)
+                    Text(incident.confidenceLabel)
                         .font(DS.Font.caption2())
                         .fontWeight(.bold)
                         .foregroundStyle(incident.confidence.color)

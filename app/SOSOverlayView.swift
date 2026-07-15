@@ -5,14 +5,26 @@ struct SOSOverlayView: View {
     @EnvironmentObject private var locationManager: LocationManager
     @State private var isHolding = false
     @State private var isShowingRoute = false
+    @State private var isShowingEscort = false
     @State private var pendingResolutionAction: SOSResolutionAction?
+
+    private var isEscortActive: Bool {
+        sosStore.isActive && sosStore.session?.kind == .escort
+    }
+
+    private var isSOSActive: Bool {
+        sosStore.isActive && sosStore.session?.kind != .escort
+    }
 
     var body: some View {
         VStack(alignment: .trailing, spacing: 10) {
-            if sosStore.isActive {
+            if isSOSActive {
                 activePanel
+            } else if isEscortActive {
+                escortActiveChip
             } else {
                 holdButton
+                walkWithMeButton
             }
         }
         .padding(.horizontal, 18)
@@ -25,6 +37,12 @@ struct SOSOverlayView: View {
                     .environmentObject(sosStore)
             }
             .presentationDetents([.medium, .large])
+        }
+        .sheet(isPresented: $isShowingEscort) {
+            EscortView()
+                .environmentObject(sosStore)
+                .environmentObject(locationManager)
+                .presentationDetents([.medium, .large])
         }
         .confirmationDialog(
             pendingResolutionAction?.title ?? "End SOS?",
@@ -106,6 +124,55 @@ struct SOSOverlayView: View {
                     .background(.black.opacity(0.58), in: Capsule())
             }
         }
+    }
+
+    private var walkWithMeButton: some View {
+        Button {
+            isShowingEscort = true
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "figure.walk")
+                    .font(.system(size: 14, weight: .bold))
+                Text("Walk with me")
+                    .font(DS.Font.caption2())
+                    .fontWeight(.bold)
+            }
+            .foregroundStyle(.white)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(DS.Color.accent.opacity(0.88), in: Capsule())
+            .overlay(Capsule().stroke(DS.Color.accent.opacity(0.55), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Walk with me")
+        .accessibilityHint("Share a live walk with one in-app trusted contact.")
+    }
+
+    private var escortActiveChip: some View {
+        Button {
+            isShowingEscort = true
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "figure.walk.circle.fill")
+                    .font(.title3)
+                    .foregroundStyle(DS.Color.accent)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Walk active")
+                        .font(DS.Font.caption())
+                        .fontWeight(.heavy)
+                        .foregroundStyle(.white)
+                    Text("Tap to manage")
+                        .font(DS.Font.caption2())
+                        .foregroundStyle(.white.opacity(0.68))
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(.black.opacity(0.72), in: Capsule())
+            .overlay(Capsule().stroke(DS.Color.accent.opacity(0.35), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Walk with me is active")
     }
 
     private var activePanel: some View {
@@ -252,10 +319,12 @@ struct SOSOverlayView: View {
                     .foregroundStyle(.white.opacity(0.42))
 
                 ForEach(sosStore.activeTrustedContacts.prefix(3)) { contact in
+                    let isOptedOut = sosStore.optedOutContactIDs.contains(contact.id)
+                    let isAlerted = sosStore.alertedContactIDs.contains(contact.id)
                     HStack(spacing: 8) {
-                        Image(systemName: sosStore.alertedContactIDs.contains(contact.id) ? "bell.badge.fill" : "bell.fill")
+                        Image(systemName: isOptedOut ? "bell.slash.fill" : isAlerted ? "bell.badge.fill" : "bell.fill")
                             .font(.caption)
-                            .foregroundStyle(sosStore.alertedContactIDs.contains(contact.id) ? DS.Color.positive : .white.opacity(0.52))
+                            .foregroundStyle(isOptedOut ? IncidentSeverity.medium.tint : isAlerted ? DS.Color.positive : .white.opacity(0.52))
                             .frame(width: 18)
                         Text(contact.displayName)
                             .font(DS.Font.caption())
@@ -263,10 +332,10 @@ struct SOSOverlayView: View {
                             .foregroundStyle(.white.opacity(0.78))
                             .lineLimit(1)
                         Spacer()
-                        Text(sosStore.alertedContactIDs.contains(contact.id) ? "alerted" : "ready")
+                        Text(isOptedOut ? "opted out" : isAlerted ? "alerted" : "ready")
                             .font(DS.Font.caption2())
                             .fontWeight(.bold)
-                            .foregroundStyle(sosStore.alertedContactIDs.contains(contact.id) ? DS.Color.positive : .white.opacity(0.46))
+                            .foregroundStyle(isOptedOut ? IncidentSeverity.medium.tint : isAlerted ? DS.Color.positive : .white.opacity(0.46))
                     }
                 }
 

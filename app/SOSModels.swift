@@ -1,7 +1,14 @@
 import CoreLocation
 import Foundation
 
-enum SOSSessionState: String, Identifiable {
+enum SOSSessionKind: String, Codable, Identifiable {
+    case sos
+    case escort
+
+    var id: String { rawValue }
+}
+
+enum SOSSessionState: String, Codable, Identifiable {
     case active
     case stopping
     case stopped
@@ -10,7 +17,7 @@ enum SOSSessionState: String, Identifiable {
     var id: String { rawValue }
 }
 
-enum SOSQueueEventKind: String, Identifiable {
+enum SOSQueueEventKind: String, Codable, Identifiable {
     case started
     case locationUpdated
     case stopped
@@ -19,7 +26,7 @@ enum SOSQueueEventKind: String, Identifiable {
     var id: String { rawValue }
 }
 
-enum SOSQueueStatus: String, Identifiable {
+enum SOSQueueStatus: String, Codable, Identifiable {
     case queued
     case waitingForRemote
     case delivered
@@ -63,6 +70,22 @@ struct SOSTrailPoint: Identifiable {
         course = nil
         horizontalAccuracy = nil
     }
+
+    init(
+        id: UUID,
+        coordinate: CLLocationCoordinate2D,
+        timestamp: Date,
+        speed: CLLocationSpeed?,
+        course: CLLocationDirection?,
+        horizontalAccuracy: CLLocationAccuracy?
+    ) {
+        self.id = id
+        self.coordinate = coordinate
+        self.timestamp = timestamp
+        self.speed = speed
+        self.course = course
+        self.horizontalAccuracy = horizontalAccuracy
+    }
 }
 
 struct SOSSession: Identifiable {
@@ -70,6 +93,26 @@ struct SOSSession: Identifiable {
     var startedAt: Date
     var endedAt: Date?
     var state: SOSSessionState
+    /// Defaults to `.sos` for legacy sessions restored from older snapshots.
+    var kind: SOSSessionKind
+    /// App trusted-contact relationship id when `kind == .escort`.
+    var escortRelationshipId: String?
+
+    init(
+        id: UUID,
+        startedAt: Date,
+        endedAt: Date? = nil,
+        state: SOSSessionState,
+        kind: SOSSessionKind = .sos,
+        escortRelationshipId: String? = nil
+    ) {
+        self.id = id
+        self.startedAt = startedAt
+        self.endedAt = endedAt
+        self.state = state
+        self.kind = kind
+        self.escortRelationshipId = escortRelationshipId
+    }
 
     var isActive: Bool {
         state == .active || state == .stopping

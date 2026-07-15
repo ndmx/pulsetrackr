@@ -2,7 +2,7 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { encodeGeohash } = require('../src/geohash');
+const { encodeGeohash } = require('../lib/geohash');
 
 // Local decoder mirrors the client test: confirms the encoded cell contains the
 // original point, which is the core correctness property of the encoder.

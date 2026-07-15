@@ -53,6 +53,16 @@ final class LocationManager: NSObject, ObservableObject {
         }
     }
 
+    func refreshCurrentLocationIfAuthorized() {
+        switch manager.authorizationStatus {
+        case .authorizedAlways, .authorizedWhenInUse:
+            manager.requestLocation()
+            manager.startUpdatingLocation()
+        default:
+            break
+        }
+    }
+
     func setEmergencyTrackingActive(_ isActive: Bool) {
         manager.desiredAccuracy = isActive ? kCLLocationAccuracyBest : kCLLocationAccuracyHundredMeters
         manager.distanceFilter = isActive ? 10 : 50

@@ -1,13 +1,11 @@
-'use strict';
-
 // Standard (GeoFire-compatible) geohash encoding. Must stay byte-for-byte
 // compatible with the client encoder (app/Geohash.swift) so prefix-range queries
 // line up. Written onto each public incident so the app can geo-bound its feed.
 
 const BASE32 = '0123456789bcdefghjkmnpqrstuvwxyz';
-const GEOHASH_PRECISION = 9;
+export const GEOHASH_PRECISION = 9;
 
-function encodeGeohash(latitude, longitude, precision = GEOHASH_PRECISION) {
+export function encodeGeohash(latitude: number, longitude: number, precision: number = GEOHASH_PRECISION): string {
   let latMin = -90;
   let latMax = 90;
   let lonMin = -180;
@@ -47,5 +45,3 @@ function encodeGeohash(latitude, longitude, precision = GEOHASH_PRECISION) {
   }
   return hash;
 }
-
-module.exports = { encodeGeohash, GEOHASH_PRECISION };

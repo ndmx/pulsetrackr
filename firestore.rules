@@ -9,8 +9,7 @@ service cloud.firestore {
     function isPulsetrackrAdmin() {
       return signedIn()
         && (request.auth.token.sosAdmin == true
-          || request.auth.token.careTeam == true
-          || request.auth.token.lawEnforcement == true);
+          || request.auth.token.careTeam == true);
     }
 
     match /safety_incidents_public/{incidentId} {
@@ -30,7 +29,43 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    match /safety_incident_signal_voters_private/{voterId} {
+      allow read, write: if false;
+    }
+
+    match /reporter_reputation_private/{reporterId} {
+      allow read, write: if false;
+    }
+
     match /safety_feed_rate_limits_private/{rateLimitId} {
+      allow read, write: if false;
+    }
+
+    match /safety_incident_counter_shards_private/{shardId} {
+      allow read, write: if false;
+    }
+
+    match /safety_incident_counter_rollup_queue_private/{queueId} {
+      allow read, write: if false;
+    }
+
+    match /safety_incident_counter_rollups_private/{rollupId} {
+      allow read, write: if false;
+    }
+
+    match /user_push_devices_private/{deviceId} {
+      allow read, write: if false;
+    }
+
+    match /incident_push_markers_private/{markerId} {
+      allow read, write: if false;
+    }
+
+    match /incident_push_attempts_private/{attemptId} {
+      allow read, write: if false;
+    }
+
+    match /incident_push_dlq_private/{entryId} {
       allow read, write: if false;
     }
 
@@ -46,6 +81,31 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    match /sos_notification_tasks_private/{taskId} {
+      allow read, write: if false;
+    }
+
+    match /sos_notification_dlq_private/{entryId} {
+      allow read, write: if false;
+    }
+
+    match /sos_app_alerts_private/{alertId} {
+      allow read: if signedIn() && resource.data.recipientUid == request.auth.uid;
+      allow write: if false;
+    }
+
+    match /sos_app_trusted_contact_invites_private/{inviteId} {
+      allow read, write: if false;
+    }
+
+    match /sos_app_trusted_contacts_private/{relationshipId} {
+      allow read, write: if false;
+    }
+
+    match /sos_sms_opt_outs_private/{optOutId} {
+      allow read, write: if false;
+    }
+
     match /sos_idempotency_private/{idempotencyId} {
       allow read, write: if false;
     }
@@ -58,9 +118,25 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    match /sos_law_enforcement_requests_private/{requestId} {
+      allow read, write: if false;
+    }
+
     match /sos_access_audit/{auditId} {
       allow read: if isPulsetrackrAdmin();
       allow write: if false;
+    }
+
+    match /sos_access_audit_chain_heads/{chainId} {
+      allow read, write: if false;
+    }
+
+    match /sos_disclosure_key_releases_private/{releaseId} {
+      allow read, write: if false;
+    }
+
+    match /sos_role_claim_grants_private/{grantId} {
+      allow read, write: if false;
     }
 
     match /{document=**} {

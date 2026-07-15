@@ -1,0 +1,61 @@
+Hello App Review,
+
+Thank you for the review. Please find the requested information below.
+
+1. Screen recording
+A screen recording captured on a physical iPhone running the latest available iOS version is provided here: [ATTACH VIDEO OR ADD VIEWABLE LINK].
+
+The recording starts with launching PulseTrackr and demonstrates the core user flow:
+- Allowing location permission and viewing nearby incident reports on the map/feed
+- Creating a community incident report
+- Adding optional report evidence, including camera/photo and voice-note flows where prompted
+- Opening an incident detail page
+- Using community actions such as Seen, Not seen, Unsafe, Road blocked, and Cleared
+- Using the “Report or hide this” control for objectionable user-generated content
+- Opening Settings and configuring SOS trusted contacts, including the Contacts permission prompt
+- Reviewing the SOS trusted-contact flow
+
+2. Tested devices and operating systems
+PulseTrackr was tested on the following physical device(s) before submission:
+- [iPhone model], iOS [version]
+- [Add any other physical devices tested]
+
+3. App purpose and target audience
+PulseTrackr is a community safety and local incident awareness app for people who want nearby safety context before traveling, commuting, walking, or checking on their community. The app helps users view, submit, verify, dispute, clear, and report/hide local safety incidents. It provides value by organizing nearby community safety reports into a location-aware map and feed.
+
+PulseTrackr is for general public/community use. It is not a police, ambulance, fire, medical, emergency dispatch, or law enforcement service.
+
+4. Setup and access instructions
+No account registration or login credentials are required. The app uses anonymous Firebase Authentication.
+
+To access the main features:
+- Install and launch the app
+- Allow location permission to view nearby reports
+- Use the Map or Feed tabs to view local incidents
+- Use the Report tab to create a test incident
+- Optional camera, photo library, and microphone permissions are requested only when adding photo or voice evidence
+- Open an incident detail page to mark it Seen, Not seen, Unsafe, Road blocked, or Cleared
+- Use “Report or hide this” to hide/report objectionable user-generated content
+- Open Settings/SOS Trusted Contacts to add a trusted contact and review SOS behavior
+
+No sample files are required.
+
+5. External services, tools, and platforms
+PulseTrackr uses:
+- Firebase Authentication for anonymous authentication
+- Firebase Firestore for incident/report data
+- Firebase Cloud Functions for server-side incident, moderation, and SOS workflows
+- Firebase Storage for optional user-submitted photo/audio evidence
+- Firebase App Check / Apple App Attest for backend abuse protection
+- Mapbox Maps SDK for map display
+- Apple Core Location, ContactsUI, PhotosUI, AVFoundation, and camera/photo frameworks for native app features
+
+The app does not use payments, subscriptions, ads, AI services, or third-party protected content.
+
+6. Regional differences
+PulseTrackr functions consistently across all regions where it is available. There are no region-specific feature or content differences. Incident visibility is based on the user’s location and selected watch radius.
+
+7. Regulated industry or protected third-party material
+PulseTrackr does not operate as a regulated emergency response, medical, law enforcement, financial, or transportation service. It does not contact police, ambulance, fire, or emergency services. The SOS feature only notifies trusted contacts selected by the user.
+
+The app does not include protected third-party material requiring authorization.

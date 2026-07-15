@@ -12,6 +12,7 @@ final class IncidentStore: ObservableObject {
 
     /// Set when a remote write (report submission, signal) ultimately fails so the UI can surface it.
     @Published var lastSyncError: String?
+    @Published private(set) var pendingOutboxCount: Int = 0
 
     // O(1) lookup: id → stable index in the incidents array.
     // Local mutations keep indices stable; remote snapshots rebuild the lookup.
@@ -25,9 +26,18 @@ final class IncidentStore: ObservableObject {
     private var observedCenter: CLLocationCoordinate2D?
     private var observedRadiusKm: Double?
     private let resubscribeDistanceMeters: CLLocationDistance = 500
+    private let outbox: OutboxQueue
+    private var isDrainingOutbox = false
+    private var locallySubmittedIncidentIDs: Set<UUID> = []
 
-    init(remoteStore: SafetyIncidentRemoteStore? = SafetyIncidentRemoteStore.makeIfConfigured()) {
+    init(
+        remoteStore: SafetyIncidentRemoteStore? = SafetyIncidentRemoteStore.makeIfConfigured(),
+        outbox: OutboxQueue? = nil
+    ) {
         self.remoteStore = remoteStore
+        // Production uses the durable shared outbox; under XCTest each store gets an
+        // isolated, throwaway outbox so tests don't share persistent state.
+        self.outbox = outbox ?? IncidentStore.defaultOutbox()
         hiddenIncidentIDs = Set(
             UserDefaults.standard
                 .stringArray(forKey: hiddenIncidentIDsKey)?
@@ -35,6 +45,23 @@ final class IncidentStore: ObservableObject {
         )
         rebuildLookup()
         refreshActiveIncidents()
+        retryPendingOutbox()
+    }
+
+    /// True when running under XCTest. Used to keep unit tests hermetic: no live
+    /// network store, an isolated outbox, and no background drain Tasks (which would
+    /// otherwise pile up on the MainActor and starve other @MainActor tests).
+    static var isUnderTest: Bool {
+        ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+    }
+
+    private static func defaultOutbox() -> OutboxQueue {
+        // In-memory (no disk I/O) under XCTest so per-store construction never blocks the
+        // MainActor; durable shared singleton otherwise.
+        if isUnderTest {
+            return OutboxQueue(inMemory: true)
+        }
+        return .shared
     }
 
     /// Point the incident feed at the user's area. Call when location or the watch
@@ -55,6 +82,36 @@ final class IncidentStore: ObservableObject {
                 self?.replaceIncidents(remoteIncidents)
             }
         }
+
+        // Opt-in complement: seed quickly from the scalable H3 callable while the live
+        // listener spins up. The listener stays the source of truth; this only adds
+        // incidents it hasn't delivered yet and never removes any.
+        if UserDefaults.standard.bool(forKey: AppStorageKey.useH3FeedCallable) {
+            seedFromH3Callable(center: center, radiusKm: radiusKm)
+        }
+    }
+
+    private func seedFromH3Callable(center: CLLocationCoordinate2D, radiusKm: Double) {
+        guard let remoteStore else { return }
+        Task { [weak self] in
+            guard let seeded = try? await remoteStore.queryIncidentsH3(near: center, radiusMeters: radiusKm * 1_000),
+                  !seeded.isEmpty else { return }
+            await MainActor.run { self?.mergeSeededIncidents(seeded) }
+        }
+    }
+
+    /// Additively merges callable-seeded incidents: only those the live listener has not
+    /// already provided, so the listener remains authoritative for the observed region.
+    private func mergeSeededIncidents(_ seeded: [Incident]) {
+        var didChange = false
+        for incident in seeded where lookup[incident.id] == nil {
+            lookup[incident.id] = incidents.count
+            incidents.append(incident)
+            didChange = true
+        }
+        guard didChange else { return }
+        objectWillChange.send()
+        refreshActiveIncidents()
     }
 
     private(set) var activeIncidents: [Incident] = []
@@ -78,17 +135,9 @@ final class IncidentStore: ObservableObject {
         evidenceUpdates: [String] = [],
         evidenceAttachments: [IncidentEvidenceAttachment] = []
     ) {
-        // No location shared → store nil rather than fabricating a pin at the
-        // default center. The incident still appears in the feed, just without a map pin.
-        let publicCoordinate: CLLocationCoordinate2D?
-        if let exact = reporterCoordinate {
-            publicCoordinate = useApproximateLocation ? Self.publicCoordinate(from: exact) : exact
-        } else {
-            publicCoordinate = nil
-        }
-
         let incident = Incident(
             id: UUID(),
+            remoteDocumentID: nil,
             title: title,
             summary: summary,
             category: category,
@@ -96,7 +145,8 @@ final class IncidentStore: ObservableObject {
             severity: severity,
             status: status,
             reporterCoordinate: reporterCoordinate,
-            coordinate: publicCoordinate,
+            coordinate: Self.localApproximateCoordinate(from: reporterCoordinate),
+            locationRevealStatus: reporterCoordinate == nil ? nil : .pendingKAnonymity,
             neighborhood: neighborhood.isEmpty ? "Nearby area" : neighborhood,
             reportedAt: Date(),
             confirmations: 1,
@@ -106,61 +156,26 @@ final class IncidentStore: ObservableObject {
         )
         // Append (O(1) amortised) keeps all existing indices stable in the lookup.
         objectWillChange.send()
+        locallySubmittedIncidentIDs.insert(incident.id)
         lookup[incident.id] = incidents.count
         incidents.append(incident)
         refreshActiveIncidents()
 
-        if let remoteStore {
-            let clientRef = UUID().uuidString
-            let submittedTitle = incident.title
-            let submittedSummary = incident.summary
-            let submittedCategory = incident.category
-            let submittedSubtype = incident.subtype
-            let submittedSeverity = incident.severity
-            let submittedNeighborhood = incident.neighborhood
-            let submittedCoordinate = incident.reporterCoordinate
-            Task { [weak self] in
-                // Evidence upload is best-effort; the report itself must not be lost silently.
-                let uploadedEvidence = try? await remoteStore.uploadIncidentEvidence(
-                    evidenceAttachments,
-                    clientRef: clientRef
-                )
-                do {
-                    _ = try await Self.retrying {
-                        try await remoteStore.submitIncident(
-                            title: submittedTitle,
-                            summary: submittedSummary,
-                            category: submittedCategory,
-                            subtype: submittedSubtype,
-                            severity: submittedSeverity,
-                            status: status,
-                            neighborhood: submittedNeighborhood,
-                            reporterCoordinate: submittedCoordinate,
-                            useApproximateLocation: useApproximateLocation,
-                            clientRef: clientRef,
-                            evidence: uploadedEvidence ?? []
-                        )
-                    }
-                    self?.lastSyncError = nil
-                } catch {
-                    self?.lastSyncError = "We couldn't upload your report. Check your connection and try again."
-                }
-            }
-        }
-    }
-
-    private static func publicCoordinate(from exactCoordinate: CLLocationCoordinate2D) -> CLLocationCoordinate2D {
-        let minimumMeters = 140.0
-        let maximumMeters = 260.0
-        let distance = Double.random(in: minimumMeters...maximumMeters)
-        let bearing = Double.random(in: 0..<(2 * .pi))
-        let latitudeMeters = 111_320.0
-        let longitudeMeters = max(cos(exactCoordinate.latitude * .pi / 180) * latitudeMeters, 1)
-
-        return CLLocationCoordinate2D(
-            latitude: exactCoordinate.latitude + (cos(bearing) * distance / latitudeMeters),
-            longitude: exactCoordinate.longitude + (sin(bearing) * distance / longitudeMeters)
-        )
+        let clientRef = UUID().uuidString
+        enqueueIncidentOperation(.incidentReport(IncidentReportOutboxPayload(
+            localIncidentID: incident.id,
+            clientRef: clientRef,
+            title: incident.title,
+            summary: incident.summary,
+            category: incident.category.rawValue,
+            subtype: incident.subtype.rawValue,
+            severity: incident.severity.rawValue,
+            status: status.rawValue,
+            neighborhood: incident.neighborhood,
+            reporterCoordinate: incident.reporterCoordinate.map(CodableCoordinate.init),
+            useApproximateLocation: useApproximateLocation,
+            evidenceAttachments: evidenceAttachments.map(IncidentEvidenceOutboxPayload.init)
+        )))
     }
 
     func nearbyIncidents(
@@ -186,6 +201,31 @@ final class IncidentStore: ObservableObject {
         lookup[id].map { incidents[$0] }
     }
 
+    /// Resolves an incident for a deep link. Prefer the in-memory feed when the id
+    /// already matches a store entry (local UUID or remote document id); otherwise
+    /// fetch once from the public remote store without inserting into the feed.
+    @MainActor
+    func incidentForDeepLink(id: String) async -> Incident? {
+        let needle = id.lowercased()
+        if let uuid = UUID(uuidString: id), let match = incident(withID: uuid) {
+            return match
+        }
+        if let match = incidents.first(where: {
+            $0.id.uuidString.lowercased() == needle
+                || $0.remoteDocumentID?.lowercased() == needle
+        }) {
+            return match
+        }
+
+        guard let remoteStore else { return nil }
+        do {
+            return try await remoteStore.fetchIncident(withID: id)
+        } catch {
+            lastSyncError = "We couldn't load that incident yet. Please try again."
+            return nil
+        }
+    }
+
     func confirm(_ incident: Incident) {
         record(.seen, for: incident)
     }
@@ -193,60 +233,24 @@ final class IncidentStore: ObservableObject {
     func record(_ signal: CommunitySignal, for incident: Incident) {
         guard let index = lookup[incident.id] else { return }
         guard incidents[index].status != .resolved else { return }
+        guard let nextState = incidents[index].contractState(after: signal) else { return }
         objectWillChange.send()
-        switch signal {
-        case .seen:
-            incidents[index].confirmations += 1
-        case .notSeen:
-            incidents[index].disputes += 1
-            if incidents[index].status == .active, incidents[index].disputes >= incidents[index].confirmations {
-                incidents[index].status = .watching
-            }
-        case .unsafe:
-            incidents[index].unsafeReports += 1
-            incidents[index].status = .active
-            if incidents[index].severity != .urgent {
-                incidents[index].severity = .high
-            }
-        case .roadBlocked:
-            incidents[index].blockedReports += 1
-            // A road-blocked report should only ever raise the floor to Medium,
-            // never weaken an existing severity. Previously the `category == .traffic`
-            // clause forced High/Urgent traffic incidents back down to Medium.
-            if incidents[index].severity == .low {
-                incidents[index].severity = .medium
-            }
-        case .cleared:
-            incidents[index].clearedReports += 1
-            if incidents[index].clearedReports >= 3 {
-                incidents[index].status = .resolved
-            } else {
-                incidents[index].status = .watching
-            }
-        }
-
+        incidents[index].apply(nextState)
         incidents[index].updates.insert(
             IncidentUpdate(message: signal.updateMessage, timestamp: Date()),
             at: 0
         )
         refreshActiveIncidents()
 
-        if let remoteStore {
-            let incidentID = incident.id
-            Task { [weak self] in
-                do {
-                    try await Self.retrying {
-                        try await remoteStore.recordSignal(
-                            signal,
-                            forIncidentWithID: incidentID
-                        )
-                    }
-                    self?.lastSyncError = nil
-                } catch {
-                    self?.lastSyncError = "We couldn't sync that update. Check your connection and try again."
-                }
-            }
+        if signal == .cleared {
+            hideIncident(incidents[index])
         }
+
+        enqueueIncidentOperation(.incidentSignal(IncidentSignalOutboxPayload(
+            localIncidentID: incident.id,
+            remoteIncidentID: incident.remoteDocumentID,
+            signal: signal.rawValue
+        )))
     }
 
     func markResolved(_ incident: Incident) {
@@ -263,19 +267,11 @@ final class IncidentStore: ObservableObject {
     func recordConcern(_ reason: IncidentConcernReason, for incident: Incident) {
         hideIncident(incident)
 
-        if let remoteStore {
-            let incidentID = incident.id
-            Task { [weak self] in
-                do {
-                    try await Self.retrying {
-                        try await remoteStore.recordConcern(reason, forIncidentWithID: incidentID)
-                    }
-                    self?.lastSyncError = nil
-                } catch {
-                    self?.lastSyncError = "We hid this report, but couldn't send the review request. Check your connection and try again."
-                }
-            }
-        }
+        enqueueIncidentOperation(.incidentConcern(IncidentConcernOutboxPayload(
+            localIncidentID: incident.id,
+            remoteIncidentID: incident.remoteDocumentID,
+            reason: reason.rawValue
+        )))
     }
 
     func hideIncident(_ incident: Incident) {
@@ -287,9 +283,181 @@ final class IncidentStore: ObservableObject {
 
     private func replaceIncidents(_ remoteIncidents: [Incident]) {
         objectWillChange.send()
-        incidents = remoteIncidents
+        let remoteIDs = Set(remoteIncidents.map(\.id))
+        let remoteDocumentIDs = Set(remoteIncidents.compactMap(\.remoteDocumentID))
+        let localIncidentsNotYetInRemoteFeed = incidents.filter { incident in
+            guard locallySubmittedIncidentIDs.contains(incident.id),
+                  remoteIDs.contains(incident.id) == false else { return false }
+            if let remoteDocumentID = incident.remoteDocumentID {
+                return remoteDocumentIDs.contains(remoteDocumentID) == false
+            }
+            return true
+        }
+        incidents = remoteIncidents + localIncidentsNotYetInRemoteFeed
         rebuildLookup()
         refreshActiveIncidents()
+    }
+
+    private func attachRemoteDocumentID(_ remoteID: String, toIncidentWithID id: UUID) {
+        guard let index = lookup[id] else { return }
+        objectWillChange.send()
+        incidents[index].remoteDocumentID = remoteID
+    }
+
+    /// Local-only display coordinate for the reporter's own just-submitted report.
+    /// The exact reporter coordinate remains private; the server remains the source of
+    /// truth for public H3 disclosure once the remote incident is eligible.
+    private static func localApproximateCoordinate(from coordinate: CLLocationCoordinate2D?) -> CLLocationCoordinate2D? {
+        guard let coordinate, coordinate.isValid else { return nil }
+        let gridDegrees = 0.004
+        let latitude = ((coordinate.latitude / gridDegrees).rounded(.down) + 0.5) * gridDegrees
+        let longitude = ((coordinate.longitude / gridDegrees).rounded(.down) + 0.5) * gridDegrees
+        let approximate = CLLocationCoordinate2D(
+            latitude: min(max(latitude, -90), 90),
+            longitude: min(max(longitude, -180), 180)
+        )
+        return approximate.isValid ? approximate : nil
+    }
+
+    func retryPendingOutbox() {
+        guard !IncidentStore.isUnderTest else { return }
+        Task { [weak self] in
+            await self?.drainIncidentOutbox(force: true)
+        }
+    }
+
+    private func enqueueIncidentOperation(_ payload: OutboxPayload) {
+        // Under XCTest the local incident state is already updated synchronously by the
+        // caller; skip the durable-outbox background Task so it can't starve the MainActor.
+        guard !IncidentStore.isUnderTest else { return }
+        let kind: OutboxOperationKind
+        switch payload {
+        case .incidentReport:
+            kind = .incidentReport
+        case .incidentSignal:
+            kind = .incidentSignal
+        case .incidentConcern:
+            kind = .incidentConcern
+        default:
+            return
+        }
+
+        Task { [weak self] in
+            await self?.outbox.enqueue(OutboxOperation(kind: kind, payload: payload))
+            await self?.refreshOutboxCount()
+            await self?.drainIncidentOutbox(force: true)
+        }
+    }
+
+    private func refreshOutboxCount() async {
+        pendingOutboxCount = await outbox.pendingCount(for: [.incidentReport, .incidentSignal, .incidentConcern])
+    }
+
+    private func drainIncidentOutbox(force: Bool) async {
+        guard !isDrainingOutbox else { return }
+        guard let remoteStore else {
+            await refreshOutboxCount()
+            lastSyncError = "Your updates are saved locally until Firebase is configured."
+            return
+        }
+
+        isDrainingOutbox = true
+        defer { isDrainingOutbox = false }
+
+        let dueOperations = await outbox.dueOperations(
+            for: [.incidentReport, .incidentSignal, .incidentConcern],
+            now: force ? .distantFuture : .now
+        )
+
+        for operation in dueOperations {
+            await outbox.markProcessing(operation.id)
+            do {
+                try await processIncidentOutboxOperation(operation, remoteStore: remoteStore)
+                await outbox.remove(operation.id)
+                lastSyncError = nil
+            } catch {
+                await outbox.retryLater(operation.id, error: error)
+                lastSyncError = message(for: operation.kind)
+            }
+        }
+
+        await refreshOutboxCount()
+    }
+
+    private func processIncidentOutboxOperation(
+        _ operation: OutboxOperation,
+        remoteStore: SafetyIncidentRemoteStore
+    ) async throws {
+        switch operation.payload {
+        case .incidentReport(let payload):
+            guard
+                let category = IncidentCategory(rawValue: payload.category),
+                let subtype = IncidentSubtype(rawValue: payload.subtype),
+                let severity = IncidentSeverity(rawValue: payload.severity),
+                let status = IncidentStatus(rawValue: payload.status)
+            else {
+                throw IncidentOutboxError.invalidPayload
+            }
+
+            let uploadedEvidence = try await remoteStore.uploadIncidentEvidence(
+                payload.evidenceAttachments.map(\.attachment),
+                clientRef: payload.clientRef
+            )
+            let remoteID = try await remoteStore.submitIncident(
+                title: payload.title,
+                summary: payload.summary,
+                category: category,
+                subtype: subtype,
+                severity: severity,
+                status: status,
+                neighborhood: payload.neighborhood,
+                reporterCoordinate: payload.reporterCoordinate?.clLocationCoordinate,
+                useApproximateLocation: payload.useApproximateLocation,
+                clientRef: payload.clientRef,
+                evidence: uploadedEvidence
+            )
+            attachRemoteDocumentID(remoteID, toIncidentWithID: payload.localIncidentID)
+
+        case .incidentSignal(let payload):
+            guard
+                let signal = CommunitySignal(rawValue: payload.signal),
+                let incidentID = remoteIncidentID(from: payload.localIncidentID, explicitID: payload.remoteIncidentID)
+            else {
+                throw IncidentOutboxError.missingRemoteIncidentID
+            }
+            try await remoteStore.recordSignal(signal, forIncidentWithID: incidentID)
+
+        case .incidentConcern(let payload):
+            guard
+                let reason = IncidentConcernReason(rawValue: payload.reason),
+                let incidentID = remoteIncidentID(from: payload.localIncidentID, explicitID: payload.remoteIncidentID)
+            else {
+                throw IncidentOutboxError.missingRemoteIncidentID
+            }
+            try await remoteStore.recordConcern(reason, forIncidentWithID: incidentID)
+
+        default:
+            break
+        }
+    }
+
+    private func remoteIncidentID(from localID: UUID?, explicitID: String?) -> String? {
+        if let explicitID, !explicitID.isEmpty { return explicitID }
+        guard let localID else { return nil }
+        return incident(withID: localID)?.remoteDocumentID
+    }
+
+    private func message(for kind: OutboxOperationKind) -> String {
+        switch kind {
+        case .incidentReport:
+            "We couldn't upload your report yet. It is saved and will retry."
+        case .incidentSignal:
+            "We couldn't sync that update yet. It is saved and will retry."
+        case .incidentConcern:
+            "We hid this report, but the review request is waiting to retry."
+        default:
+            "An update is waiting to retry."
+        }
     }
 
     private func rebuildLookup() {
@@ -299,23 +467,63 @@ final class IncidentStore: ObservableObject {
         }
     }
 
-    /// Retries a remote operation with linear backoff before giving up.
-    private static func retrying<T>(
-        attempts: Int = 3,
-        _ operation: () async throws -> T
-    ) async throws -> T {
-        var lastError: Error?
-        for attempt in 0..<attempts {
-            do {
-                return try await operation()
-            } catch {
-                lastError = error
-                if attempt < attempts - 1 {
-                    try? await Task.sleep(for: .seconds(Double(attempt + 1) * 2))
-                }
-            }
+}
+
+private enum IncidentOutboxError: Error {
+    case invalidPayload
+    case missingRemoteIncidentID
+}
+
+private extension IncidentEvidenceOutboxPayload {
+    init(_ attachment: IncidentEvidenceAttachment) {
+        self.kind = attachment.kind.rawValue
+        self.data = attachment.data
+        self.filename = attachment.filename
+        self.contentType = attachment.contentType
+        self.durationSeconds = attachment.durationSeconds
+    }
+
+    var attachment: IncidentEvidenceAttachment {
+        IncidentEvidenceAttachment(
+            kind: IncidentEvidenceKind(rawValue: kind) ?? .photo,
+            filename: filename,
+            contentType: contentType,
+            data: data,
+            durationSeconds: durationSeconds
+        )
+    }
+}
+
+private extension Incident {
+    func contractState(after signal: CommunitySignal) -> ContractDTO.IncidentState? {
+        guard
+            let status = ContractDTO.IncidentStatus(rawValue: status.rawValue),
+            let severity = ContractDTO.IncidentSeverity(rawValue: severity.rawValue),
+            let contractSignal = ContractDTO.CommunitySignal(rawValue: signal.rawValue)
+        else {
+            return nil
         }
-        throw lastError ?? CancellationError()
+
+        let state = ContractDTO.IncidentState(
+            blockedReports: blockedReports,
+            clearedReports: clearedReports,
+            confirmations: confirmations,
+            disputes: disputes,
+            severity: severity,
+            status: status,
+            unsafeReports: unsafeReports
+        )
+        return ContractDTO.applySignal(state, signal: contractSignal)
+    }
+
+    mutating func apply(_ state: ContractDTO.IncidentState) {
+        blockedReports = state.blockedReports
+        clearedReports = state.clearedReports
+        confirmations = state.confirmations
+        disputes = state.disputes
+        unsafeReports = state.unsafeReports
+        severity = IncidentSeverity(rawValue: state.severity.rawValue) ?? severity
+        status = IncidentStatus(rawValue: state.status.rawValue) ?? status
     }
 }
 
@@ -336,6 +544,7 @@ extension Incident {
     static let seedIncidents: [Incident] = [
         Incident(
             id: UUID(),
+            remoteDocumentID: nil,
             title: "Robbery reported near fuel station",
             summary: "People nearby report armed suspects moving away from the station. Avoid the frontage road while details are confirmed.",
             category: .security,
@@ -354,6 +563,7 @@ extension Incident {
         ),
         Incident(
             id: UUID(),
+            remoteDocumentID: nil,
             title: "Smoke spotted behind warehouse",
             summary: "Small smoke plume visible from the service road. People nearby are keeping distance.",
             category: .fire,
@@ -371,6 +581,7 @@ extension Incident {
         ),
         Incident(
             id: UUID(),
+            remoteDocumentID: nil,
             title: "Heavy traffic near bridge approach",
             summary: "Vehicles are moving slowly after a minor collision. Drivers are using the right lane only.",
             category: .traffic,
@@ -389,6 +600,7 @@ extension Incident {
         ),
         Incident(
             id: UUID(),
+            remoteDocumentID: nil,
             title: "Power outage affecting several streets",
             summary: "Residents around the market area report a sudden outage. No restoration estimate yet.",
             category: .utilities,
@@ -406,6 +618,7 @@ extension Incident {
         ),
         Incident(
             id: UUID(),
+            remoteDocumentID: nil,
             title: "Community cleanup gathering",
             summary: "Volunteers are meeting near the school gate to clear blocked drainage before the rain.",
             category: .community,

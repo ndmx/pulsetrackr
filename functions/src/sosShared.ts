@@ -1,8 +1,6 @@
-'use strict';
+import crypto from 'node:crypto';
 
-const crypto = require('node:crypto');
-
-const DEFAULT_POLICY = Object.freeze({
+export const DEFAULT_POLICY = Object.freeze({
   includeRecentTrail: true,
   recentTrailMaxPoints: 12,
   recentTrailMaxAgeSeconds: 15 * 60,
@@ -13,7 +11,7 @@ const DEFAULT_POLICY = Object.freeze({
   auditPrivilegedAccess: true,
 });
 
-const HARD_LIMITS = Object.freeze({
+export const HARD_LIMITS = Object.freeze({
   recentTrailMaxPoints: 24,
   recentTrailMaxAgeSeconds: 30 * 60,
   liveLocationUpdateIntervalSeconds: 15,
@@ -24,28 +22,41 @@ const HARD_LIMITS = Object.freeze({
   activationWindowLimit: 5,
 });
 
-const ALLOWED_RESOLUTION_REASONS = new Set([
+export const ALLOWED_RESOLUTION_REASONS = new Set([
   'user_resolved',
   'false_alarm',
   'timed_out',
   'transferred_to_care_team',
 ]);
 
-const ALLOWED_CHANNELS = new Set(['sms', 'phone_call', 'email']);
+const ALLOWED_CHANNELS = new Set(['sms', 'phone_call', 'email', 'app_push']);
 const PRIVILEGED_ROLES = new Set(['sosAdmin', 'careTeam', 'lawEnforcement']);
+export const LEGAL_PROCESS_TYPES = new Set([
+  'warrant',
+  'court_order',
+  'subpoena',
+  'emergency_disclosure_request',
+  'other',
+]);
+export const DISCLOSURE_SCOPES = new Set([
+  'last_known_location',
+  'direction_of_travel',
+  'redacted_trusted_contacts',
+  'recent_trail',
+]);
 
-function requiredString(value, fieldName) {
+function requiredString(value: unknown, fieldName: string): string {
   if (typeof value !== 'string' || value.trim().length === 0) {
     throw invalidArgument(`${fieldName} is required`);
   }
   return value.trim();
 }
 
-function optionalString(value) {
+function optionalString(value: unknown): string | null {
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
 }
 
-function parseDate(value, fieldName, fallback = new Date()) {
+function parseDate(value: unknown, fieldName: string, fallback: Date = new Date()): Date {
   if (value == null) {
     return fallback;
   }
@@ -61,7 +72,7 @@ function parseDate(value, fieldName, fallback = new Date()) {
   throw invalidArgument(`${fieldName} must be an ISO-8601 timestamp`);
 }
 
-function clampNumber(value, fallback, min, max) {
+function clampNumber(value: unknown, fallback: number, min: number, max: number): number {
   const number = Number(value);
   if (!Number.isFinite(number)) {
     return fallback;
@@ -69,12 +80,12 @@ function clampNumber(value, fallback, min, max) {
   return Math.min(max, Math.max(min, number));
 }
 
-function clampInteger(value, fallback, min, max) {
-  const clamped = clampNumber(value, fallback, min, max);
+function clampInteger(value: unknown, fallback: number | null, min: number, max: number): number | null {
+  const clamped = clampNumber(value, fallback as number, min, max);
   return clamped == null ? null : Math.round(clamped);
 }
 
-function sanitizePrivacyPolicy(input = {}) {
+export function sanitizePrivacyPolicy(input: any = {}) {
   return {
     includeRecentTrail: input.include_recent_trail !== false,
     recentTrailMaxPoints: clampInteger(
@@ -107,7 +118,7 @@ function sanitizePrivacyPolicy(input = {}) {
   };
 }
 
-function sanitizeLocationSnapshot(input, fieldName = 'location') {
+function sanitizeLocationSnapshot(input: any, fieldName = 'location') {
   if (typeof input !== 'object' || input == null) {
     throw invalidArgument(`${fieldName} is required`);
   }
@@ -132,7 +143,7 @@ function sanitizeLocationSnapshot(input, fieldName = 'location') {
   });
 }
 
-function sanitizeDirectionOfTravel(input) {
+function sanitizeDirectionOfTravel(input: any) {
   if (typeof input !== 'object' || input == null) {
     return null;
   }
@@ -144,7 +155,7 @@ function sanitizeDirectionOfTravel(input) {
   });
 }
 
-function sanitizeDevice(input = {}) {
+function sanitizeDevice(input: any = {}) {
   if (typeof input !== 'object' || input == null) {
     return {};
   }
@@ -164,23 +175,26 @@ function sanitizeDevice(input = {}) {
   });
 }
 
-function sanitizeTrustedContacts(input = []) {
+function sanitizeTrustedContacts(input: any = []) {
   if (!Array.isArray(input)) {
     throw invalidArgument('trusted_contacts_to_notify must be an array');
   }
 
-  return input.slice(0, 10).map((contact, index) => {
+  return input.slice(0, 10).map((contact: any, index: number) => {
     if (typeof contact !== 'object' || contact == null) {
       throw invalidArgument(`trusted_contacts_to_notify[${index}] is invalid`);
     }
     const contactId = requiredString(contact.contact_id, `trusted_contacts_to_notify[${index}].contact_id`);
     const channels = Array.isArray(contact.channels)
-      ? contact.channels.filter((channel) => ALLOWED_CHANNELS.has(channel))
+      ? contact.channels.filter((channel: string) => ALLOWED_CHANNELS.has(channel))
       : [];
     const phoneNumber = optionalString(contact.phone_number);
     const emailAddress = optionalString(contact.email_address);
-    const deliverableChannels = channels.filter((channel) => {
+    const appUserUid = optionalString(contact.app_user_uid);
+    const appRelationshipId = optionalString(contact.app_relationship_id);
+    const deliverableChannels = channels.filter((channel: string) => {
       if (channel === 'email') return Boolean(emailAddress);
+      if (channel === 'app_push') return Boolean(appUserUid && appRelationshipId);
       return Boolean(phoneNumber);
     });
 
@@ -190,13 +204,15 @@ function sanitizeTrustedContacts(input = []) {
       relationshipLabel: optionalString(contact.relationship_label),
       phoneNumber,
       emailAddress,
+      appUserUid,
+      appRelationshipId,
       channels: [...new Set(deliverableChannels)],
       consentedAt: contact.consented_at ? parseDate(contact.consented_at, `trusted_contacts_to_notify[${index}].consented_at`) : null,
     });
-  }).filter((contact) => contact.channels.length > 0);
+  }).filter((contact: any) => contact.channels.length > 0);
 }
 
-function limitRecentTrail(input, activatedAt, privacy) {
+function limitRecentTrail(input: any, activatedAt: Date, privacy: any) {
   if (!privacy.includeRecentTrail) {
     return [];
   }
@@ -206,16 +222,16 @@ function limitRecentTrail(input, activatedAt, privacy) {
 
   const oldest = activatedAt.getTime() - privacy.recentTrailMaxAgeSeconds * 1000;
   return input
-    .map((point, index) => sanitizeLocationSnapshot(point, `recent_trail[${index}]`))
-    .filter((point) => {
+    .map((point: any, index: number) => sanitizeLocationSnapshot(point, `recent_trail[${index}]`))
+    .filter((point: any) => {
       const time = point.capturedAt.getTime();
       return time >= oldest && time <= activatedAt.getTime();
     })
-    .sort((a, b) => a.capturedAt.getTime() - b.capturedAt.getTime())
+    .sort((a: any, b: any) => a.capturedAt.getTime() - b.capturedAt.getTime())
     .slice(-privacy.recentTrailMaxPoints);
 }
 
-function sanitizeActivationPayload(data, now = new Date()) {
+export function sanitizeActivationPayload(data: any, now: Date = new Date()) {
   const activatedAt = parseDate(data.activated_at, 'activated_at', now);
   const privacy = sanitizePrivacyPolicy(data.privacy);
 
@@ -232,7 +248,7 @@ function sanitizeActivationPayload(data, now = new Date()) {
   };
 }
 
-function sanitizeLocationUpdatePayload(data) {
+export function sanitizeLocationUpdatePayload(data: any) {
   return {
     sessionId: requiredString(data.session_id, 'session_id'),
     location: sanitizeLocationSnapshot(data.location, 'location'),
@@ -243,7 +259,7 @@ function sanitizeLocationUpdatePayload(data) {
   };
 }
 
-function sanitizeResolutionPayload(data) {
+export function sanitizeResolutionPayload(data: any) {
   const reason = requiredString(data.resolution_reason, 'resolution_reason');
   if (!ALLOWED_RESOLUTION_REASONS.has(reason)) {
     throw invalidArgument('resolution_reason is not supported');
@@ -257,7 +273,46 @@ function sanitizeResolutionPayload(data) {
   };
 }
 
-function makeIdempotencyKey(uid, clientSessionId) {
+export function sanitizeLawEnforcementRequestPayload(data: any, now: Date = new Date()) {
+  const legalProcessType = requiredString(data.legal_process_type, 'legal_process_type');
+  if (!LEGAL_PROCESS_TYPES.has(legalProcessType)) {
+    throw invalidArgument('legal_process_type is not supported');
+  }
+
+  return {
+    sessionId: requiredString(data.session_id, 'session_id'),
+    agencyName: requiredString(data.agency_name, 'agency_name'),
+    requesterName: requiredString(data.requester_name, 'requester_name'),
+    requesterTitle: optionalString(data.requester_title),
+    requesterEmail: optionalString(data.requester_email),
+    requesterPhone: optionalString(data.requester_phone),
+    legalProcessType,
+    legalReference: requiredString(data.legal_reference, 'legal_reference'),
+    documentReference: optionalString(data.document_reference),
+    requestedScope: sanitizeDisclosureScope(data.requested_scope),
+    urgency: optionalString(data.urgency) || 'active_sos',
+    notes: optionalString(data.notes),
+    receivedAt: parseDate(data.received_at, 'received_at', now),
+  };
+}
+
+export function sanitizeLawEnforcementReviewPayload(data: any, now: Date = new Date()) {
+  const decision = requiredString(data.decision, 'decision');
+  if (decision !== 'approved' && decision !== 'denied') {
+    throw invalidArgument('decision must be approved or denied');
+  }
+
+  return {
+    legalRequestId: requiredString(data.legal_request_id, 'legal_request_id'),
+    decision,
+    approvedScope: sanitizeDisclosureScope(data.approved_scope),
+    reviewNote: requiredString(data.review_note, 'review_note'),
+    expiresAt: data.expires_at ? parseDate(data.expires_at, 'expires_at') : null,
+    reviewedAt: parseDate(data.reviewed_at, 'reviewed_at', now),
+  };
+}
+
+export function makeIdempotencyKey(uid: string, clientSessionId: string): string {
   const hash = crypto
     .createHash('sha256')
     .update(`${uid}:${clientSessionId}`)
@@ -266,11 +321,11 @@ function makeIdempotencyKey(uid, clientSessionId) {
   return `${uid.slice(0, 24)}_${hash}`;
 }
 
-function makeLocationUpdateId(sessionId, sequenceNumber) {
+export function makeLocationUpdateId(sessionId: string, sequenceNumber: number): string {
   return `${sessionId}_${String(sequenceNumber).padStart(12, '0')}`;
 }
 
-function redactedContact(contact) {
+export function redactedContact(contact: any) {
   return withoutNullish({
     contactId: contact.contactId,
     displayName: contact.displayName,
@@ -278,56 +333,59 @@ function redactedContact(contact) {
     channels: contact.channels,
     phoneLast4: contact.phoneNumber ? contact.phoneNumber.slice(-4) : null,
     hasEmailAddress: Boolean(contact.emailAddress),
+    appRelationshipId: contact.appRelationshipId,
+    hasAppRoute: Boolean(contact.appUserUid && contact.appRelationshipId),
     consentedAt: contact.consentedAt || null,
   });
 }
 
-function privilegedRoleFromClaims(claims = {}) {
+export function privilegedRoleFromClaims(claims: any = {}): string | null {
   for (const role of PRIVILEGED_ROLES) {
-    if (claims[role] === true) {
+    if (claims[role] === true && roleClaimIsActive(claims, role)) {
       return role;
     }
   }
   return null;
 }
 
-function withoutNullish(object) {
+function roleClaimIsActive(claims: any, role: string): boolean {
+  const expiresAt = claims.sosRoleExpiries?.[role];
+  if (!expiresAt) return true;
+  const date = new Date(expiresAt);
+  return Number.isFinite(date.getTime()) && date.getTime() > Date.now();
+}
+
+function sanitizeDisclosureScope(input: unknown): string[] {
+  const values = Array.isArray(input) ? input : ['last_known_location', 'direction_of_travel'];
+  const scope = values
+    .map(optionalString)
+    .filter((value): value is string => Boolean(value) && DISCLOSURE_SCOPES.has(value as string));
+  return [...new Set(scope)].slice(0, DISCLOSURE_SCOPES.size);
+}
+
+function withoutNullish(object: Record<string, unknown>): Record<string, any> {
   return Object.fromEntries(Object.entries(object).filter(([, value]) => value != null));
 }
 
-function finiteOrNull(value) {
+function finiteOrNull(value: unknown): number | null {
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
 }
 
-function nonNegative(value) {
+function nonNegative(value: unknown): number | null {
   const number = finiteOrNull(value);
   return number == null ? null : Math.max(0, number);
 }
 
-function normalizeDegrees(value) {
+function normalizeDegrees(value: unknown): number | null {
   const number = finiteOrNull(value);
   if (number == null) return null;
   const normalized = number % 360;
   return normalized >= 0 ? normalized : normalized + 360;
 }
 
-function invalidArgument(message) {
-  const error = new Error(message);
+function invalidArgument(message: string): Error {
+  const error = new Error(message) as Error & { code: string };
   error.code = 'invalid-argument';
   return error;
 }
-
-module.exports = {
-  ALLOWED_RESOLUTION_REASONS,
-  HARD_LIMITS,
-  DEFAULT_POLICY,
-  makeIdempotencyKey,
-  makeLocationUpdateId,
-  privilegedRoleFromClaims,
-  redactedContact,
-  sanitizeActivationPayload,
-  sanitizeLocationUpdatePayload,
-  sanitizePrivacyPolicy,
-  sanitizeResolutionPayload,
-};

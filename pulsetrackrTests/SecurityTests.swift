@@ -2,8 +2,8 @@
 //  SecurityTests.swift
 //  pulsetrackrTests
 //
-//  Security-focused tests: HTTPS enforcement, coordinate privacy (reporter
-//  location fuzzing), URL safety, and input sanitisation at system boundaries.
+//  Security-focused tests: HTTPS enforcement, coordinate privacy, URL safety,
+//  and input sanitisation at system boundaries.
 //
 
 import Testing
@@ -41,43 +41,22 @@ struct SecurityTests {
         #expect(incident.googleMapsDirectionsURL.scheme == "https")
     }
 
-    // MARK: - Coordinate privacy (reporter location fuzzing)
+    // MARK: - Coordinate privacy
 
-    @Test @MainActor func publicCoordinateDiffersFromExactReporterLocation() {
+    @Test @MainActor func publicCoordinateIsNotExactReporterLocation() {
         let store = IncidentStore()
         let exact = CLLocationCoordinate2D(latitude: 6.5244, longitude: 3.3792)
         store.addIncident(
-            title: "Privacy test", summary: "Verifying fuzzing.",
+            title: "Privacy test", summary: "Verifying local approximate privacy.",
             category: .community, subtype: .localWarning, severity: .low,
             neighborhood: "Test", reporterCoordinate: exact
         )
         let added = store.incidents.last!
-        let pub = added.coordinate!
-        // The public coordinate must not match the reporter's exact position
-        let sameLocation = pub.latitude == exact.latitude &&
-                           pub.longitude == exact.longitude
-        #expect(!sameLocation, "Public coordinate must be fuzzed away from exact location")
-    }
-
-    @Test @MainActor func publicCoordinateStaysWithinPrivacyRadiusMeters() {
-        let store = IncidentStore()
-        let exact = CLLocationCoordinate2D(latitude: 6.5244, longitude: 3.3792)
-        store.addIncident(
-            title: "Radius test", summary: "Verifying fuzzing radius.",
-            category: .community, subtype: .localWarning, severity: .low,
-            neighborhood: "Test", reporterCoordinate: exact
-        )
-        let added = store.incidents.last!
-        let pub = added.coordinate!
-
-        // Convert degree difference to approximate metres
-        let latMetres = abs(pub.latitude  - exact.latitude)  * 111_320.0
-        let lonMetres = abs(pub.longitude - exact.longitude) *
-                        cos(exact.latitude * .pi / 180) * 111_320.0
-        let distance  = (latMetres * latMetres + lonMetres * lonMetres).squareRoot()
-
-        #expect(distance >= 100, "Fuzz must be at least 100 m for privacy")
-        #expect(distance <= 400, "Fuzz must stay within 400 m to remain area-accurate")
+        // Local visibility uses a coarse approximate pin so the reporter can see
+        // their own report; the exact reporter coordinate stays private and is
+        // never published as the public map pin.
+        #expect(added.coordinate != nil)
+        #expect(added.coordinate?.latitude != exact.latitude || added.coordinate?.longitude != exact.longitude)
     }
 
     @Test @MainActor func publicCoordinateIsStoredSeparatelyFromReporterCoordinate() {
@@ -89,16 +68,14 @@ struct SecurityTests {
             neighborhood: "Test", reporterCoordinate: exact
         )
         let added = store.incidents.last!
-        // reporterCoordinate holds the exact location (private)
-        // coordinate holds the fuzzed location (public)
+        // reporterCoordinate holds the exact location (private).
+        // coordinate is a local approximate display pin (not the exact reporter point).
         #expect(added.reporterCoordinate != nil)
         let reporter = added.reporterCoordinate!
         #expect(reporter.latitude  == exact.latitude)
         #expect(reporter.longitude == exact.longitude)
-        // The public coordinate is different
-        let pub = added.coordinate!
-        #expect(pub.latitude  != reporter.latitude  ||
-                pub.longitude != reporter.longitude)
+        #expect(added.coordinate != nil)
+        #expect(added.coordinate?.latitude != exact.latitude || added.coordinate?.longitude != exact.longitude)
     }
 
     @Test @MainActor func noReporterCoordinateStoresNilInstead() {

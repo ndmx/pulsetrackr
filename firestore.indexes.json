@@ -1,6 +1,62 @@
 {
   "indexes": [
     {
+      "collectionGroup": "safety_reports_private",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "privateH3Cell",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "deleteAfter",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "safety_reports_private",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "privateH3ParentCell",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "deleteAfter",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "safety_incidents_public",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "public_h3_cell",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "deleteAfter",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "safety_incident_counter_shards_private",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "incidentId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "counterField",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
       "collectionGroup": "sos_location_updates_private",
       "queryScope": "COLLECTION",
       "fields": [
@@ -45,6 +101,18 @@
   ],
   "fieldOverrides": [
     {
+      "collectionGroup": "safety_reports_private",
+      "fieldPath": "deleteAfter",
+      "ttl": true,
+      "indexes": []
+    },
+    {
+      "collectionGroup": "safety_incidents_public",
+      "fieldPath": "deleteAfter",
+      "ttl": true,
+      "indexes": []
+    },
+    {
       "collectionGroup": "sos_sessions_private",
       "fieldPath": "deleteAfter",
       "ttl": true,
@@ -64,6 +132,48 @@
     },
     {
       "collectionGroup": "sos_notification_attempts_private",
+      "fieldPath": "deleteAfter",
+      "ttl": true,
+      "indexes": []
+    },
+    {
+      "collectionGroup": "safety_incident_counter_shards_private",
+      "fieldPath": "deleteAfter",
+      "ttl": true,
+      "indexes": []
+    },
+    {
+      "collectionGroup": "safety_incident_counter_rollup_queue_private",
+      "fieldPath": "deleteAfter",
+      "ttl": true,
+      "indexes": []
+    },
+    {
+      "collectionGroup": "safety_incident_counter_rollups_private",
+      "fieldPath": "deleteAfter",
+      "ttl": true,
+      "indexes": []
+    },
+    {
+      "collectionGroup": "sos_notification_tasks_private",
+      "fieldPath": "deleteAfter",
+      "ttl": true,
+      "indexes": []
+    },
+    {
+      "collectionGroup": "sos_notification_dlq_private",
+      "fieldPath": "deleteAfter",
+      "ttl": true,
+      "indexes": []
+    },
+    {
+      "collectionGroup": "sos_disclosure_key_releases_private",
+      "fieldPath": "deleteAfter",
+      "ttl": true,
+      "indexes": []
+    },
+    {
+      "collectionGroup": "sos_role_claim_grants_private",
       "fieldPath": "deleteAfter",
       "ttl": true,
       "indexes": []
