@@ -81,6 +81,43 @@ export const list_app_trusted_contacts = onCall(callableOptions, async (request)
   return sosRepository.listAppTrustedContacts(uid);
 });
 
+export const register_sos_push_device = onCall(callableOptions, async (request) => {
+  const uid = requireAuth(request);
+  const token = cleanString(request.data?.fcm_token, 512);
+  if (!token || token.length < 16) {
+    throw new HttpsError('invalid-argument', 'A valid FCM token is required');
+  }
+  const tokenHash = crypto.createHash('sha256').update(token).digest('hex').slice(0, 16);
+  const deviceRef = db.collection('user_push_devices_private').doc(`${uid}_${tokenHash}`);
+  const rateRef = db.collection('sos_push_rate_limits_private').doc(uid);
+  const now = new Date();
+  await db.runTransaction(async (transaction) => {
+    const rateSnap = await transaction.get(rateRef);
+    const prior = rateSnap.data() as any;
+    const windowStart = timestampToDate(prior?.windowStart);
+    const inWindow = windowStart && now.getTime() - windowStart.getTime() < 60 * 60 * 1000;
+    const count = inWindow ? numberOr(prior?.count, 0) : 0;
+    if (count >= 50) {
+      throw new HttpsError('resource-exhausted', 'Too many push registrations');
+    }
+    transaction.set(rateRef, {
+      windowStart: Timestamp.fromDate(inWindow ? windowStart : now),
+      count: count + 1,
+      deleteAfter: Timestamp.fromDate(new Date(now.getTime() + 24 * 60 * 60 * 1000)),
+    });
+    transaction.set(deviceRef, {
+      owner_uid: uid,
+      fcm_token: token,
+      platform: 'ios',
+      app_version: cleanString(request.data?.app_version, 40) || 'unknown',
+      subscribed_topics: [],
+      updatedAt: FieldValue.serverTimestamp(),
+      deleteAfter: Timestamp.fromDate(new Date(now.getTime() + 60 * 24 * 60 * 60 * 1000)),
+    }, { merge: true });
+  });
+  return { registered: true };
+});
+
 export const revoke_app_trusted_contact = onCall(callableOptions, async (request) => {
   const uid = requireAuth(request);
   const relationshipId = cleanString(request.data?.relationship_id, 160);

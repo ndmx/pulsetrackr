@@ -146,36 +146,17 @@ counter documents, and the scheduled `rollupIncidentCounters` function projects 
 totals back to `safety_incidents_public` every five minutes. Public counter fields are
 therefore eventually consistent by design.
 
-## Production notification secrets
+## Production SOS delivery
 
-The SOS backend has real provider adapters, but no secrets are committed. Configure these in Firebase Functions before live deployment:
+SOS alerts go only to accepted one-way PulseTrackr app relationships. The backend
+writes recipient-scoped Firestore alerts and sends a location-free FCM wake-up
+push to registered iPhone devices. Old `trusted_contacts_to_notify` phone and
+email payloads are ignored. No Twilio sender credential is bound to the SOS
+worker. `SOS_ENVELOPE_KEK` remains required for private location encryption.
 
-```sh
-firebase functions:secrets:set TWILIO_ACCOUNT_SID
-firebase functions:secrets:set TWILIO_API_KEY_SID
-firebase functions:secrets:set TWILIO_API_KEY_SECRET
-firebase functions:secrets:set TWILIO_AUTH_TOKEN
-firebase functions:secrets:set TWILIO_FROM_NUMBER
-firebase functions:secrets:set TWILIO_EMAIL_FROM_ADDRESS
-firebase functions:secrets:set SOS_ENVELOPE_KEK
-```
-
-`SOS_ENVELOPE_KEK` must be a base64 or hex encoded 32-byte key. Generate it with `openssl rand -base64 32` and rotate by adding a new Secret Manager version, updating `SOS_ENVELOPE_KEY_VERSION`, deploying, verifying decrypt/release, then disabling old versions after the SOS retention window.
-
-For local emulator testing, copy `functions/.secret.example` values into the private ignored `functions/.secret.local`; copy `functions/.env.example` into `functions/.env.local` only for non-secret local overrides such as `TWILIO_VOICE_TWIML`, `TWILIO_EMAIL_FROM_NAME`, `TWILIO_WEBHOOK_PUBLIC_URL`, H3/k-anonymity policy values, or `SOS_ENVELOPE_KEY_VERSION`. Never commit provider credentials. `TWILIO_AUTH_TOKEN` is required for validating Twilio inbound STOP/START webhooks; production sends should use `TWILIO_API_KEY_SID` and `TWILIO_API_KEY_SECRET`.
-
-Delivery behavior:
-
-- `sms` and `phone_call` use Twilio.
-- `email` uses Twilio Comms Email.
-- If a provider is not configured, the backend writes `provider_unconfigured` to `sos_notification_attempts_private` instead of pretending the alert was sent.
-- If a provider returns an error, the attempt is marked `failed` with a capped error message for operations review.
-- If a trusted contact replies `STOP`, `CANCEL`, `END`, `QUIT`, `UNSUBSCRIBE`, `STOPALL`, `OPTOUT`, or `REVOKE`, configure Twilio to POST inbound messages to `twilio_sms_webhook`. The backend validates Twilio's signature, records a private phone-hash opt-out, skips future SOS SMS to that number, and returns the opted-out contact id so the app can tell the user.
-
-Provider-specific setup:
-
-- Twilio SMS/voice/email: configure `TWILIO_ACCOUNT_SID`, `TWILIO_API_KEY_SID`, `TWILIO_API_KEY_SECRET`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM_NUMBER`, and `TWILIO_EMAIL_FROM_ADDRESS`.
-- App Check: see `APP_CHECK_SETUP.md` for iOS provider setup, debug token handling, and Firebase-side registration.
+The legacy inbound `twilio_sms_webhook` retains `TWILIO_AUTH_TOKEN` only to
+record STOP/START replies to historical messages. See
+`docs/runbooks/sos-operations.md` for the device and APNs verification gate.
 
 ## Local emulator setup
 
@@ -201,9 +182,9 @@ Production callable functions enforce Firebase App Check by default. The emulato
 - `safety_incident_counter_shards_private`: server-only sharded write path for community signal counters.
 - `safety_incident_counter_rollup_queue_private`: server-only queue documents telling `rollupIncidentCounters` which incidents need public counter projection.
 - `safety_incident_counter_rollups_private`: server-only rollup snapshots for counter operations review.
-- `sos_sessions_private`: active and resolved SOS session records, server-only. Stores encrypted exact location/trail/final-location blobs, trusted-contact notification targets, redacted trusted-contact summaries, device/network metadata, status, activation/resolution timestamps, TTL, and access-expiry timestamps.
+- `sos_sessions_private`: active and resolved SOS session records, server-only. Stores encrypted exact location/trail/final-location blobs, device/network metadata, status, activation/resolution timestamps, TTL, and access-expiry timestamps.
 - `sos_location_updates_private`: append-only encrypted live SOS location updates keyed by `session_id` + `sequence_number`, server-only, with TTL cleanup after retention expires.
-- `sos_notification_attempts_private`: trusted-contact notification attempts. The backend writes queued attempts, tries Twilio SMS, voice, or Comms Email delivery when configured, then updates each record with `sent`, `failed`, or `provider_unconfigured`.
+- `sos_notification_attempts_private`: trusted-contact notification attempts. The backend records successful in-app alert writes for accepted app relationships. Push nudges are separate best-effort delivery.
 - `sos_app_trusted_contact_invites_private`: short-lived one-way app trusted-contact invite records. These are server-only; clients get a one-time invite code from the callable and cannot read invite records directly.
 - `sos_app_trusted_contacts_private`: accepted one-way app trusted-contact relationships. `ownerUid -> trustedContactUid` means the owner's SOS may alert the trusted contact; the reverse direction requires a separate invite and acceptance.
 - `sos_app_alerts_private`: app-visible SOS alerts for accepted app trusted contacts. A signed-in client may read only records where `recipientUid == request.auth.uid`; writes stay server-only.
@@ -222,7 +203,7 @@ The iOS app should call these only through `SOSRemoteStore.makeIfConfigured()` s
 
 ### `activate_sos`
 
-Creates an active SOS session and asks the backend to notify trusted contacts. The app does not send SMS directly.
+Creates an active SOS session and queues in-app alerts for accepted PulseTrackr contacts.
 
 Server behavior:
 
@@ -232,7 +213,7 @@ Server behavior:
 - Rate-limits activation per user with a short cooldown and hourly window.
 - Caps recent trail sharing again on the server, even if the client sends more.
 - Writes a private SOS session, idempotency record, audit event, and notification attempts.
-- Attempts Twilio SMS, voice, or Comms Email delivery after the session transaction commits, creates app alerts for accepted one-way app trusted contacts, then updates notification status and the session `notificationSummary`.
+- Creates app alerts for accepted one-way app trusted contacts after the session transaction commits, sends location-free FCM nudges to registered devices, then updates notification status and the session `notificationSummary`.
 
 Request fields:
 
@@ -241,7 +222,7 @@ Request fields:
 - `last_known_location`: exact location snapshot `{ latitude, longitude, horizontal_accuracy_meters?, altitude_meters?, speed_meters_per_second?, course_degrees?, captured_at }`.
 - `recent_trail`: privacy-capped array of recent location snapshots.
 - `direction_of_travel`: optional `{ bearing_degrees, speed_meters_per_second?, computed_from_point_count }`.
-- `trusted_contacts_to_notify`: local trusted contacts selected for backend notification. Treat phone/email values as private and store only in server-only records.
+- `trusted_contacts_to_notify`: legacy field accepted for wire compatibility but ignored. Recipients come from accepted server-side app relationships.
 - `device`: optional battery, low-power-mode, app version, build number, device model, system version, network status/interface metadata.
 - `privacy`: client policy values such as trail point limit, trail age, live update interval, and privileged access constraints.
 

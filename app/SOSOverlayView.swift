@@ -114,7 +114,7 @@ struct SOSOverlayView: View {
                 .padding(.vertical, 5)
                 .background(.black.opacity(0.54), in: Capsule())
 
-            if sosStore.activeTrustedContacts.isEmpty {
+            if sosStore.activeAppTrustedContacts.isEmpty {
                 Text("No contacts set")
                     .font(DS.Font.caption2())
                     .fontWeight(.bold)
@@ -304,8 +304,8 @@ struct SOSOverlayView: View {
 
     @ViewBuilder
     private var contactStrip: some View {
-        if sosStore.activeTrustedContacts.isEmpty {
-            Label("No trusted contacts. Location is still saved locally.", systemImage: "person.crop.circle.badge.exclamationmark")
+        if sosStore.activeAppTrustedContacts.isEmpty {
+            Label("No accepted app contacts. Location is still saved locally.", systemImage: "person.crop.circle.badge.exclamationmark")
                 .font(DS.Font.caption())
                 .fontWeight(.semibold)
                 .foregroundStyle(IncidentSeverity.high.tint)
@@ -318,29 +318,28 @@ struct SOSOverlayView: View {
                     .textCase(.uppercase)
                     .foregroundStyle(.white.opacity(0.42))
 
-                ForEach(sosStore.activeTrustedContacts.prefix(3)) { contact in
-                    let isOptedOut = sosStore.optedOutContactIDs.contains(contact.id)
-                    let isAlerted = sosStore.alertedContactIDs.contains(contact.id)
+                ForEach(sosStore.activeAppTrustedContacts.prefix(3)) { contact in
+                    let isAlerted = sosStore.appAlertedRelationshipIDs.contains(contact.id)
                     HStack(spacing: 8) {
-                        Image(systemName: isOptedOut ? "bell.slash.fill" : isAlerted ? "bell.badge.fill" : "bell.fill")
+                        Image(systemName: isAlerted ? "bell.badge.fill" : "bell.fill")
                             .font(.caption)
-                            .foregroundStyle(isOptedOut ? IncidentSeverity.medium.tint : isAlerted ? DS.Color.positive : .white.opacity(0.52))
+                            .foregroundStyle(isAlerted ? DS.Color.positive : .white.opacity(0.52))
                             .frame(width: 18)
-                        Text(contact.displayName)
+                        Text(contact.trustedContactDisplayName)
                             .font(DS.Font.caption())
                             .fontWeight(.semibold)
                             .foregroundStyle(.white.opacity(0.78))
                             .lineLimit(1)
                         Spacer()
-                        Text(isOptedOut ? "opted out" : isAlerted ? "alerted" : "ready")
+                        Text(isAlerted ? "alerted" : "ready")
                             .font(DS.Font.caption2())
                             .fontWeight(.bold)
-                            .foregroundStyle(isOptedOut ? IncidentSeverity.medium.tint : isAlerted ? DS.Color.positive : .white.opacity(0.46))
+                            .foregroundStyle(isAlerted ? DS.Color.positive : .white.opacity(0.46))
                     }
                 }
 
-                if sosStore.activeTrustedContacts.count > 3 {
-                    Text("+\(sosStore.activeTrustedContacts.count - 3) more")
+                if sosStore.activeAppTrustedContacts.count > 3 {
+                    Text("+\(sosStore.activeAppTrustedContacts.count - 3) more")
                         .font(DS.Font.caption2())
                         .foregroundStyle(.white.opacity(0.46))
                 }

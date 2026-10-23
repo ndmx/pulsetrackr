@@ -17,14 +17,12 @@ xcodebuild -project pulsetrackr.xcodeproj -scheme pulsetrackr -destination 'gene
 ## Required Secrets
 
 ```sh
-firebase functions:secrets:set TWILIO_ACCOUNT_SID --project pulsetracker-0000
-firebase functions:secrets:set TWILIO_API_KEY_SID --project pulsetracker-0000
-firebase functions:secrets:set TWILIO_API_KEY_SECRET --project pulsetracker-0000
-firebase functions:secrets:set TWILIO_AUTH_TOKEN --project pulsetracker-0000
-firebase functions:secrets:set TWILIO_FROM_NUMBER --project pulsetracker-0000
-firebase functions:secrets:set TWILIO_EMAIL_FROM_ADDRESS --project pulsetracker-0000
 firebase functions:secrets:set SOS_ENVELOPE_KEK --project pulsetracker-0000
 ```
+
+`TWILIO_AUTH_TOKEN` remains bound only to the legacy inbound STOP/START
+webhook. No new SOS alert uses Twilio. Configure the APNs key in Firebase
+Console before enabling the new iPhone push flow.
 
 ## Deploy
 

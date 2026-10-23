@@ -151,7 +151,7 @@ test('escort and SOS activation rate limits use isolated documents', async () =>
   assert.equal(enqueueCalls.length, 1);
 });
 
-test('legacy activation defaults to SOS and invokes the existing fan-out path', async () => {
+test('legacy SOS activation does not enqueue a phone recipient', async () => {
   const { db, repo, enqueueCalls } = harness();
   const now = new Date('2026-07-10T12:00:00.000Z');
   const payload = sanitizeActivationPayload(activationInput({
@@ -171,7 +171,7 @@ test('legacy activation defaults to SOS and invokes the existing fan-out path', 
   assert.equal(session.kind, 'sos');
   assert.equal(session.notificationSagaStatus, 'enqueued');
   assert.equal(enqueueCalls.length, 1);
-  assert.equal(enqueueCalls[0].contacts.length, 1);
+  assert.equal(enqueueCalls[0].contacts.length, 0);
 });
 
 test('escort resolve accepts arrived_safely and touches only the escort alert', async () => {

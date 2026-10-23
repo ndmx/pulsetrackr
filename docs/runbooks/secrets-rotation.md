@@ -1,6 +1,10 @@
 # Secrets Rotation Runbook
 
-## Twilio Secrets
+## Historical Twilio secrets
+
+New SOS alerts use only in-app delivery. Rotate `TWILIO_AUTH_TOKEN` while the
+legacy inbound STOP/START webhook remains active; outbound sender credentials
+are no longer used.
 
 1. Add a new Firebase Secret Manager version with `firebase functions:secrets:set`.
 2. Deploy `functions:pulsetrackr-sos`.

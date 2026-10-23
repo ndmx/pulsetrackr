@@ -30,6 +30,7 @@ exports.activate_sos = sos.activate_sos;
 exports.create_app_trusted_contact_invite = sos.create_app_trusted_contact_invite;
 exports.accept_app_trusted_contact_invite = sos.accept_app_trusted_contact_invite;
 exports.list_app_trusted_contacts = sos.list_app_trusted_contacts;
+exports.register_sos_push_device = sos.register_sos_push_device;
 exports.revoke_app_trusted_contact = sos.revoke_app_trusted_contact;
 exports.append_sos_location = sos.append_sos_location;
 exports.resolve_sos = sos.resolve_sos;
