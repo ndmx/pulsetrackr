@@ -7,8 +7,13 @@ const contractRoot = path.resolve(__dirname, '../../packages/contract');
 const vendorRoot = path.resolve(__dirname, '../vendor/contract');
 const sourceDist = path.join(contractRoot, 'dist');
 
+// A fresh release checkout may not have the ignored contract/dist output yet.
+// In that case the committed generated vendor package is already deployable.
 if (!fs.existsSync(path.join(sourceDist, 'index.js'))) {
-  throw new Error('Build packages/contract before building functions.');
+  if (!fs.existsSync(path.join(vendorRoot, 'dist/index.js'))) {
+    throw new Error('Build packages/contract before building functions.');
+  }
+  return;
 }
 
 fs.rmSync(vendorRoot, { recursive: true, force: true });
