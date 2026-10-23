@@ -1,198 +1,72 @@
 import SwiftUI
 
-struct OpeningSplashView: View {
-    @State private var pulseOpacity: CGFloat = 0.42
-    @State private var pulseScale: CGFloat = 0.92
-    @State private var logoOpacity: CGFloat = 0
-    @State private var logoScale: CGFloat = 0.86
-    @State private var wordmarkOpacity: CGFloat = 0
-
-    var body: some View {
-        ZStack {
-            Color.black.ignoresSafeArea()
-
-            VStack(spacing: 22) {
-                ZStack {
-                    ForEach(0..<4, id: \.self) { index in
-                        Circle()
-                            .stroke(DS.Color.accent.opacity(0.20 - Double(index) * 0.04), lineWidth: 1.2)
-                            .frame(width: 88 + CGFloat(index * 46), height: 88 + CGFloat(index * 46))
-                            .scaleEffect(pulseScale + CGFloat(index) * 0.06)
-                            .opacity(pulseOpacity)
-                    }
-
-                    Image(systemName: "dot.radiowaves.left.and.right")
-                        .font(.system(size: 38, weight: .heavy))
-                        .foregroundStyle(DS.Color.accent)
-                        .frame(width: 86, height: 86)
-                        .background(DS.Color.accent.opacity(0.13), in: Circle())
-                        .overlay(Circle().stroke(DS.Color.accent.opacity(0.30), lineWidth: 1.5))
-                        .scaleEffect(logoScale)
-                        .opacity(logoOpacity)
-                }
-
-                HStack(alignment: .lastTextBaseline, spacing: 1) {
-                    Text("Pulse")
-                        .font(DS.Font.display(40, relativeTo: .largeTitle))
-                        .foregroundStyle(.white)
-                    Text("trackr")
-                        .font(DS.Font.display(40, relativeTo: .largeTitle))
-                        .foregroundStyle(.white.opacity(0.50))
-                }
-                .tracking(-0.8)
-                .opacity(wordmarkOpacity)
-            }
-        }
-        .preferredColorScheme(.dark)
-        .onAppear { runOpeningAnimation() }
-    }
-
-    private func runOpeningAnimation() {
-        withAnimation(.easeInOut(duration: 1.2).repeatForever(autoreverses: true)) {
-            pulseScale = 1.18
-            pulseOpacity = 0.10
-        }
-
-        withAnimation(.spring(response: 0.62, dampingFraction: 0.72).delay(0.08)) {
-            logoOpacity = 1
-            logoScale = 1
-        }
-
-        withAnimation(.easeOut(duration: 0.42).delay(0.42)) {
-            wordmarkOpacity = 1
-        }
-    }
-}
-
+// Lumina Design System · Variation 04 · Created by ndmx
+// Map Safety Glass keeps onboarding quiet and reserves strong status colors for safety.
 struct LaunchView: View {
     var onContinue: () -> Void
 
-    @State private var pulseOpacity: CGFloat = 0.4
-    @State private var pulseScale: CGFloat = 1.0
-    @State private var iconOpacity: CGFloat = 0
-    @State private var titleOpacity: CGFloat = 0
-    @State private var featuresOpacity: CGFloat = 0
-    @State private var buttonOpacity: CGFloat = 0
-
     var body: some View {
-        ZStack {
-            Color.black.ignoresSafeArea()
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(spacing: DS.Space.sm) {
+                    Image(systemName: "location.north.circle.fill")
+                        .font(.system(size: 27, weight: .regular))
+                        .foregroundStyle(DS.Color.accent)
+                    Text("Pulsetrackr")
+                        .font(DS.Font.display(32, relativeTo: .largeTitle))
+                        .foregroundStyle(DS.Color.textPrimary)
+                }
+                .padding(.bottom, 72)
 
-            VStack(spacing: 0) {
-                Spacer()
+                Text("Know what's happening nearby.")
+                    .font(DS.Font.display(46, relativeTo: .largeTitle))
+                    .tracking(-0.8)
+                    .foregroundStyle(DS.Color.textPrimary)
+                    .fixedSize(horizontal: false, vertical: true)
 
-                pulseIcon
-                    .padding(.bottom, 40)
-
-                brandBlock
-                    .padding(.bottom, 56)
-                    .opacity(titleOpacity)
-
-                featureList
-                    .padding(.horizontal, 32)
-                    .opacity(featuresOpacity)
-
-                Spacer()
-
-                ctaButton
-                    .padding(.horizontal, 24)
+                Text("See local reports before you head out, and share what you observe.")
+                    .font(DS.Font.body())
+                    .foregroundStyle(DS.Color.textSecondary)
+                    .padding(.top, DS.Space.md)
                     .padding(.bottom, 44)
-                    .opacity(buttonOpacity)
+
+                VStack(spacing: 0) {
+                    FeatureRow(
+                        icon: "map",
+                        color: DS.Color.accent,
+                        title: "Explore nearby reports",
+                        description: "See incidents in your watch area."
+                    )
+                    Divider().overlay(DS.Color.hairline).padding(.vertical, DS.Space.lg)
+                    FeatureRow(
+                        icon: "plus.circle",
+                        color: DS.Color.accent,
+                        title: "Report what you see",
+                        description: "Add a description, photo, or voice note."
+                    )
+                    Divider().overlay(DS.Color.hairline).padding(.vertical, DS.Space.lg)
+                    FeatureRow(
+                        icon: "location.slash",
+                        color: DS.Color.positive,
+                        title: "Keep your location private",
+                        description: "Public reports show an approximate area."
+                    )
+                }
+
+                Button("Open the map", action: onContinue)
+                    .buttonStyle(DSPrimaryButtonStyle())
+                    .padding(.top, 52)
+
+                Text("For immediate danger, contact local emergency services.")
+                    .font(DS.Font.caption())
+                    .foregroundStyle(DS.Color.textTertiary)
+                    .padding(.top, DS.Space.md)
             }
+            .frame(maxWidth: 520, alignment: .leading)
+            .padding(DS.Space.xl)
+            .frame(maxWidth: .infinity)
         }
-        .preferredColorScheme(.dark)
-        .onAppear { runEntrance() }
-    }
-
-    private var pulseIcon: some View {
-        ZStack {
-            ForEach(0..<3, id: \.self) { i in
-                Circle()
-                    .stroke(DS.Color.accent.opacity(0.18 - Double(i) * 0.05), lineWidth: 1)
-                    .frame(width: 82 + CGFloat(i * 52), height: 82 + CGFloat(i * 52))
-                    .scaleEffect(pulseScale + CGFloat(i) * 0.12)
-                    .opacity(pulseOpacity)
-            }
-
-            Image(systemName: "dot.radiowaves.left.and.right")
-                .font(.system(size: 34, weight: .heavy))
-                .foregroundStyle(DS.Color.accent)
-                .frame(width: 80, height: 80)
-                .background(DS.Color.accent.opacity(0.13), in: Circle())
-                .overlay(Circle().stroke(DS.Color.accent.opacity(0.28), lineWidth: 1.5))
-                .opacity(iconOpacity)
-        }
-    }
-
-    private var brandBlock: some View {
-        VStack(spacing: 10) {
-            HStack(alignment: .lastTextBaseline, spacing: 1) {
-                Text("Pulse")
-                    .font(DS.Font.display(48, relativeTo: .largeTitle))
-                    .foregroundStyle(.white)
-                Text("trackr")
-                    .font(DS.Font.display(48, relativeTo: .largeTitle))
-                    .foregroundStyle(.white.opacity(0.48))
-            }
-            .tracking(-1.0)
-
-            Text("Know what's happening nearby\nbefore you head out.")
-                .font(DS.Font.body())
-                .fontWeight(.medium)
-                .foregroundStyle(.white.opacity(0.56))
-                .multilineTextAlignment(.center)
-                .lineSpacing(3)
-        }
-    }
-
-    private var featureList: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            FeatureRow(
-                icon: "map.fill",
-                color: DS.Color.textSecondary,
-                title: "Live incident map",
-                description: "Real-time reports from your community"
-            )
-            FeatureRow(
-                icon: "bell.and.waves.left.and.right.fill",
-                color: DS.Color.accent,
-                title: "Report what you see",
-                description: "Photo, audio, or a quick note in under 20 seconds"
-            )
-            FeatureRow(
-                icon: "location.circle.fill",
-                color: DS.Color.positive,
-                title: "Your location stays private",
-                description: "The map shows areas only — never your exact spot"
-            )
-        }
-    }
-
-    private var ctaButton: some View {
-        Button(action: onContinue) {
-            Text("Open the map")
-        }
-        .buttonStyle(DSPrimaryButtonStyle())
-    }
-
-    private func runEntrance() {
-        withAnimation(.easeInOut(duration: 2.4).repeatForever(autoreverses: true)) {
-            pulseScale = 1.22
-            pulseOpacity = 0.12
-        }
-
-        withAnimation(.easeOut(duration: 0.5).delay(0.1)) {
-            iconOpacity = 1
-        }
-        withAnimation(.easeOut(duration: 0.5).delay(0.35)) {
-            titleOpacity = 1
-        }
-        withAnimation(.easeOut(duration: 0.5).delay(0.62)) {
-            featuresOpacity = 1
-        }
-        withAnimation(.easeOut(duration: 0.5).delay(0.88)) {
-            buttonOpacity = 1
-        }
+        .background(DS.Color.background)
     }
 }
 
@@ -203,22 +77,20 @@ private struct FeatureRow: View {
     var description: String
 
     var body: some View {
-        HStack(spacing: 16) {
+        HStack(alignment: .top, spacing: DS.Space.md) {
             Image(systemName: icon)
-                .font(.title3)
-                .fontWeight(.semibold)
+                .font(.system(size: 20, weight: .medium))
                 .foregroundStyle(color)
-                .frame(width: 48, height: 48)
-                .background(color.opacity(0.13), in: RoundedRectangle(cornerRadius: 13))
+                .frame(width: 44, height: 44)
+                .background(DS.Color.surfaceHigh, in: RoundedRectangle(cornerRadius: DS.Radius.sm))
 
-            VStack(alignment: .leading, spacing: 3) {
+            VStack(alignment: .leading, spacing: DS.Space.xs) {
                 Text(title)
-                    .font(DS.Font.body())
-                    .fontWeight(.semibold)
-                    .foregroundStyle(.white)
+                    .font(DS.Font.bodyStrong())
+                    .foregroundStyle(DS.Color.textPrimary)
                 Text(description)
                     .font(DS.Font.caption())
-                    .foregroundStyle(.white.opacity(0.52))
+                    .foregroundStyle(DS.Color.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
