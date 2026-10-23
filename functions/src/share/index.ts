@@ -232,6 +232,7 @@ function formatUtcDate(date: Date | null): string {
 export const incident_share_page = onRequest({
   region: callableOptions.region,
   maxInstances: callableOptions.maxInstances,
+  invoker: 'public',
 }, incidentShareHandler);
 
 export const __test = {
