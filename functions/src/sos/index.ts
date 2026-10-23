@@ -93,6 +93,7 @@ export const register_sos_push_device = onCall(callableOptions, async (request) 
   const now = new Date();
   await db.runTransaction(async (transaction) => {
     const rateSnap = await transaction.get(rateRef);
+    const deviceSnap = await transaction.get(deviceRef);
     const prior = rateSnap.data() as any;
     const windowStart = timestampToDate(prior?.windowStart);
     const inWindow = windowStart && now.getTime() - windowStart.getTime() < 60 * 60 * 1000;
@@ -110,7 +111,7 @@ export const register_sos_push_device = onCall(callableOptions, async (request) 
       fcm_token: token,
       platform: 'ios',
       app_version: cleanString(request.data?.app_version, 40) || 'unknown',
-      subscribed_topics: [],
+      subscribed_topics: deviceSnap.exists ? deviceSnap.data()?.subscribed_topics || [] : [],
       updatedAt: FieldValue.serverTimestamp(),
       deleteAfter: Timestamp.fromDate(new Date(now.getTime() + 60 * 24 * 60 * 60 * 1000)),
     }, { merge: true });
