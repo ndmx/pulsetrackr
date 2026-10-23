@@ -199,6 +199,7 @@ Definition: `PublicIncident`
 | `reported_at` | `string` | yes | format: date-time |
 | `source` | `string` | no | max length: 40 |
 | `reporter_trust_tier` | `ReporterTrustTier` | no |  |
+| `official_source_name` | `string` | no | max length: 120 |
 
 ### IncidentState
 
@@ -402,6 +403,28 @@ Definition: `PushDeviceRecord`
 | `platform` | `PushPlatform` | yes |  |
 | `app_version` | `string` | yes | max length: 40 |
 | `subscribed_topics` | array<`string`> | yes |  |
+
+### PulseTier
+
+Definition: `PulseTier`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| _(none)_ |  |  |  |
+
+### NeighborhoodPulse
+
+Definition: `NeighborhoodPulse`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `cell` | `string` | yes | max length: 32 |
+| `resolution` | `integer` | yes | min: 0; max: 15 |
+| `tier` | `PulseTier` | yes |  |
+| `score` | `integer` | yes | min: 0; max: 100 |
+| `trailing_counts` | `object` | yes |  |
+| `baseline_building` | `boolean` | yes |  |
+| `updated_at` | `reported_at` | yes |  |
 
 ## Operational Notes
 

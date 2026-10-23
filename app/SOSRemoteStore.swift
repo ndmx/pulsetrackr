@@ -87,6 +87,11 @@ final class SOSRemoteStore {
         return SOSAppTrustedContactList(resultData: result.data)
     }
 
+    func revokeAppTrustedContact(relationshipID: String) async throws {
+        try await ensureSignedIn()
+        _ = try await callFunction(named: "revoke_app_trusted_contact", data: ["relationship_id": relationshipID])
+    }
+
     func observeAppSOSAlerts(onChange: @escaping ([SOSAppAlert]) -> Void) async throws -> SOSAppAlertObservation {
         try await ensureSignedIn()
         guard let uid = Auth.auth().currentUser?.uid else {

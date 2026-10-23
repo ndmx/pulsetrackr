@@ -53,7 +53,7 @@ External
   ├── Firebase Firestore      → safety_incidents_public plus private reports/counters/SOS/audit ledgers
   ├── Firebase Functions      → strict-TypeScript bounded contexts (incidents/sos/disclosure/notifications/moderation/claims); incident + scheduled-rollup + H3-query + SOS/legal/claim callables + Cloud Tasks worker
   ├── Firebase Storage        → incident photo/voice evidence, scoped to reporter uid
-  ├── Twilio                  → optional trusted-contact SMS, voice, email, and STOP/START webhook
+  ├── Firebase Messaging      → in-app alert wake-up pushes (no location in payload)
   └── Mapbox Maps SDK         → conditional compile (#if canImport(MapboxMaps))
 
 Localization
@@ -185,10 +185,10 @@ to Building fire, not Market fire. No new subtypes were added. Covered by
 | `functions/src/sos/` | SOS callable module | `activate_sos`, `append_sos_location`, `resolve_sos`, app trusted-contact callables, `SOSRepository` | contract-shaped SOS payloads | private SOS session/location/app-alert/idempotency/rate-limit collections |
 | `functions/src/disclosure/` | Privileged disclosure callable module | legal request intake/review/access, `DisclosureRepository` | custom claims, legal request payloads | legal request, access-grant, and audit collections |
 | `functions/src/claims/` | Audited SOS role-claim management | `mint_sos_role_claim`, `revoke_sos_role_claim` | `sosAdmin` custom claim, target uid | custom claims (with expiry), private grant ledger, chained audit |
-| `functions/src/notifications/` | Notification domain module + Cloud Tasks worker | `processSosNotifications` (task queue), trusted-contact fan-out/DLQ helpers | SOS notification inputs, task retry count | notification attempt/task/DLQ records, Twilio provider APIs |
+| `functions/src/notifications/` | Notification domain module + Cloud Tasks worker | `processSosNotifications` (task queue), trusted-contact fan-out/DLQ helpers | accepted app relationships, task retry count | in-app alert/attempt/task/DLQ records |
 | `functions/src/shared/` | Backend shared kernel | admin init, callable/task config, util, audit chain, envelope encryption, H3/k-anon privacy helpers | runtime config, Firestore timestamps | shared audit records/helpers |
 | `functions/src/sosShared.ts` | SOS backend validation helpers | payload sanitizers, idempotency helpers | callable payloads | pure values |
-| `functions/src/notificationProviders.ts` | SOS notification adapters | Twilio SMS, voice, and Comms Email | provider secrets | Twilio delivery APIs |
+| `functions/src/notificationProviders.ts` | SOS notification adapters | FCM push nudges only | recipient token | Firebase Messaging |
 | `functions/src/twilioOptOut.ts` | Twilio inbound opt-out helpers | STOP/START parser, phone hash, signature validator | Twilio webhook params | pure values |
 | `functions/test/*.test.js` | Node backend tests | geohash, payload, H3/privacy, sharded counters, signal/concern, notification, SOS, Twilio opt-out suites | test fixtures/helpers | assertions only |
 | `packages/contract/` | Shared contract package | Zod schemas, generated TS validators/types, generated Swift Codable DTOs, shared incident signal rules | contract source schemas | generated `app/Generated/PulseTrackrContract.generated.swift` |
@@ -587,7 +587,7 @@ The Firebase backend now lives in this repo:
   - `append_sos_location`: auth/App Check, owner check, active/unexpired session check, idempotent encrypted sequence updates, append-only update records, and app alert live-location refresh.
   - `resolve_sos`: auth/App Check, owner check, supported resolution reasons, idempotent encrypted final-location resolution, chained audit write, and app alert resolution.
   - `create_app_trusted_contact_invite`, `accept_app_trusted_contact_invite`, `list_app_trusted_contacts`, `revoke_app_trusted_contact`: explicit one-way app trusted-contact workflow.
-  - `twilio_sms_webhook`: signed Twilio inbound-message webhook for STOP/START/HELP handling; writes hashed opt-out status and lets future SMS attempts skip opted-out contacts.
+  - `twilio_sms_webhook`: signed Twilio inbound-message webhook for STOP/START/HELP handling; writes hashed opt-out status for historical messages; no new SMS is sent.
   - `record_law_enforcement_request`: `sosAdmin`/`careTeam` intake for legal requests without location disclosure.
   - `review_law_enforcement_request`: `sosAdmin` approval/denial for scoped, expiring law-enforcement access.
   - `request_sos_session_access`: custom-claim gated access for `sosAdmin`, `careTeam`, or `lawEnforcement`, active-session only, chained audit, short-lived grants, and disclosure key-release ledger records. The `lawEnforcement` role must include an approved matching `legal_request_id`.
@@ -598,7 +598,7 @@ The Firebase backend now lives in this repo:
 - `docs/adr/` records the contract, privacy, resilience, and scaled read-model decisions; `docs/runbooks/` covers Firebase deploys, incident feed operations, SOS operations, and secret rotation.
 - `.github/workflows/phase1-contract.yml` gates the contract foundation with codegen drift checks, Functions build/tests, Firestore rules emulator tests, and an iOS simulator build.
 - `functions/src/sosShared.ts` keeps the validation logic pure and covered by `node --test`.
-- `functions/src/notificationProviders.ts` sends SMS, phone calls, and email through Twilio when credentials are configured. Missing credentials are recorded as `provider_unconfigured`, never as a successful alert.
+- `functions/src/notificationProviders.ts` sends FCM nudges. The in-app Firestore alert is the durable delivery record; no SOS SMS, call, or email sender remains.
 - The iOS client writes report, signal, concern, SOS activate/location/resolve actions to a durable JSON outbox under Application Support and drains it on launch/foreground. SOS also persists its local session/trail/queue snapshot so replay survives app termination.
 
 Production still needs provider secrets, `SOS_ENVELOPE_KEK`, sender verification, delivery-receipt monitoring, and a documented incident-response owner before any live SOS launch. The code path is now real, but operations must be real too.
@@ -611,15 +611,12 @@ The local Firebase CLI can see the `pulsetracker-0000` Firebase project, and `.f
 firebase deploy --only functions:pulsetrackr-sos,firestore:rules,firestore:indexes,storage --project pulsetracker-0000
 ```
 
-Before deploy, configure Twilio secrets with `firebase functions:secrets:set`:
-`TWILIO_ACCOUNT_SID`, `TWILIO_API_KEY_SID`, `TWILIO_API_KEY_SECRET`,
-`TWILIO_AUTH_TOKEN`, `TWILIO_FROM_NUMBER`, and `TWILIO_EMAIL_FROM_ADDRESS`.
+Before deploy, configure APNs in Firebase Cloud Messaging and verify push on real iPhones.
 Also configure `SOS_ENVELOPE_KEK` with `firebase functions:secrets:set`; generate
 it with `openssl rand -base64 32` and rotate by adding a new Secret Manager
 version plus a new `SOS_ENVELOPE_KEY_VERSION`, deploying, verifying decrypt/release,
 and disabling the old version after the SOS retention window.
-Use `TWILIO_EMAIL_FROM_NAME`, `TWILIO_VOICE_TWIML`, and
-`TWILIO_WEBHOOK_PUBLIC_URL` as non-secret environment overrides when needed, then
+Keep `TWILIO_AUTH_TOKEN` only for the signed historical inbound webhook, then
 assign custom responder claims through `mint_sos_role_claim`; keep
 `functions/scripts/setSosRoleClaim.js` for bootstrap/break-glass only.
 

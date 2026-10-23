@@ -1,8 +1,7 @@
 import Foundation
 
 enum ShareConfig {
-    /// Replace with the Firebase Hosting domain when chosen, and add it to DeepLinkRouter.allowedHosts at the same time.
-    static let shareBaseURL = URL(string: "https://pulsetrackr.example")!
+    static let shareBaseURL = URL(string: "https://pulsetracker.org")!
 
     /// `{shareBaseURL}/i/{docID}` where docID is the remote document id, or the local UUID lowercased.
     static func shareURL(for incident: Incident) -> URL? {

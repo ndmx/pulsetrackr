@@ -6,7 +6,6 @@ const {
   makeIdempotencyKey,
   makeLocationUpdateId,
   privilegedRoleFromClaims,
-  redactedContact,
   sanitizeActivationPayload,
   sanitizeLawEnforcementRequestPayload,
   sanitizeLawEnforcementReviewPayload,
@@ -47,7 +46,7 @@ test('activation payload rejects invalid coordinates', () => {
   }), /latitude is invalid/);
 });
 
-test('trusted contacts are deliverable and redacted for diagnostics/access', () => {
+test('legacy phone and email contacts are discarded before SOS storage', () => {
   const payload = sanitizeActivationPayload({
     client_session_id: 'client-1',
     last_known_location: { latitude: 6.52, longitude: 3.37, captured_at: '2026-05-27T12:00:00Z' },
@@ -60,18 +59,10 @@ test('trusted contacts are deliverable and redacted for diagnostics/access', () 
     }],
   });
 
-  assert.deepEqual(payload.trustedContacts[0].channels, ['sms', 'email', 'phone_call']);
-  assert.deepEqual(redactedContact(payload.trustedContacts[0]), {
-    contactId: 'contact-1',
-    displayName: 'Ada',
-    channels: ['sms', 'email', 'phone_call'],
-    phoneLast4: '5678',
-    hasEmailAddress: true,
-    hasAppRoute: false,
-  });
+  assert.deepEqual(payload.trustedContacts, []);
 });
 
-test('app trusted contact channel requires an accepted app route', () => {
+test('client-supplied app recipients are discarded in favor of server relationships', () => {
   const payload = sanitizeActivationPayload({
     client_session_id: 'client-1',
     last_known_location: { latitude: 6.52, longitude: 3.37, captured_at: '2026-05-27T12:00:00Z' },
@@ -89,16 +80,43 @@ test('app trusted contact channel requires an accepted app route', () => {
     }],
   });
 
-  assert.equal(payload.trustedContacts.length, 1);
-  assert.deepEqual(payload.trustedContacts[0].channels, ['app_push']);
-  assert.deepEqual(redactedContact(payload.trustedContacts[0]), {
-    contactId: 'contact-1',
-    displayName: 'Ada',
-    channels: ['app_push'],
-    hasEmailAddress: false,
-    appRelationshipId: 'relationship-1',
-    hasAppRoute: true,
+  assert.deepEqual(payload.trustedContacts, []);
+});
+
+test('escort activation requires one app relationship and strips notification contacts', () => {
+  const payload = sanitizeActivationPayload({
+    client_session_id: 'client-escort',
+    session_kind: 'escort',
+    escort_relationship_id: 'relationship-1',
+    last_known_location: { latitude: 6.52, longitude: 3.37, captured_at: '2026-05-27T12:00:00Z' },
+    trusted_contacts_to_notify: [{
+      contact_id: 'contact-1',
+      display_name: 'Ada',
+      phone_number: '+2348012345678',
+      channels: ['sms', 'phone_call'],
+    }],
   });
+
+  assert.equal(payload.sessionKind, 'escort');
+  assert.equal(payload.escortRelationshipId, 'relationship-1');
+  assert.deepEqual(payload.trustedContacts, []);
+
+  assert.throws(() => sanitizeActivationPayload({
+    client_session_id: 'client-escort',
+    session_kind: 'escort',
+    last_known_location: { latitude: 6.52, longitude: 3.37, captured_at: '2026-05-27T12:00:00Z' },
+  }), /escort_relationship_id is required/);
+});
+
+test('legacy activation payload defaults to sos kind', () => {
+  const payload = sanitizeActivationPayload({
+    client_session_id: 'client-1',
+    last_known_location: { latitude: 6.52, longitude: 3.37, captured_at: '2026-05-27T12:00:00Z' },
+    escort_relationship_id: 'ignored-for-sos',
+  });
+
+  assert.equal(payload.sessionKind, 'sos');
+  assert.equal(payload.escortRelationshipId, undefined);
 });
 
 test('location update ids are stable for idempotent append', () => {
@@ -136,6 +154,11 @@ test('resolution payload allows only known reasons', () => {
     resolution_reason: 'false_alarm',
     resolved_at: '2026-05-27T12:05:00Z',
   }).reason, 'false_alarm');
+  assert.equal(sanitizeResolutionPayload({
+    session_id: 'session-1',
+    resolution_reason: 'arrived_safely',
+    resolved_at: '2026-05-27T12:05:00Z',
+  }).reason, 'arrived_safely');
 
   assert.throws(() => sanitizeResolutionPayload({
     session_id: 'session-1',

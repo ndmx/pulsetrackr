@@ -14,6 +14,7 @@
 		8F1A0B852F0A111100ABCDEF /* FirebaseFunctions in Frameworks */ = {isa = PBXBuildFile; productRef = 8F1A0B822F0A111100ABCDEF /* FirebaseFunctions */; };
 		8F1A0B862F0A111100ABCDEF /* FirebaseAppCheck in Frameworks */ = {isa = PBXBuildFile; productRef = 8F1A0B872F0A111100ABCDEF /* FirebaseAppCheck */; };
 		8F1A0B902F0A111100ABCDEF /* FirebaseStorage in Frameworks */ = {isa = PBXBuildFile; productRef = 8F1A0B912F0A111100ABCDEF /* FirebaseStorage */; };
+		9A38B4C12F0A111100ABCDEF /* FirebaseMessaging in Frameworks */ = {isa = PBXBuildFile; productRef = 9A38B4C22F0A111100ABCDEF /* FirebaseMessaging */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -82,6 +83,7 @@
 				8F1A0B842F0A111100ABCDEF /* FirebaseFirestore in Frameworks */,
 				8F1A0B852F0A111100ABCDEF /* FirebaseFunctions in Frameworks */,
 				8F1A0B902F0A111100ABCDEF /* FirebaseStorage in Frameworks */,
+				9A38B4C12F0A111100ABCDEF /* FirebaseMessaging in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -150,6 +152,7 @@
 				8F1A0B802F0A111100ABCDEF /* FirebaseFirestore */,
 				8F1A0B822F0A111100ABCDEF /* FirebaseFunctions */,
 				8F1A0B912F0A111100ABCDEF /* FirebaseStorage */,
+				9A38B4C22F0A111100ABCDEF /* FirebaseMessaging */,
 			);
 			productName = pulsetrackr;
 			productReference = 772675F12E4EC6A700FEFAD5 /* pulsetrackr.app */;
@@ -465,7 +468,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
-				CODE_SIGN_ENTITLEMENTS = app/pulsetrackr.entitlements;
+				CODE_SIGN_ENTITLEMENTS = app/pulsetrackr-debug.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 205;
 				DEVELOPMENT_TEAM = 4ZSXLWH9W2;
@@ -695,6 +698,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 8F1A0B7D2F0A111100ABCDEF /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
 			productName = FirebaseStorage;
+		};
+		9A38B4C22F0A111100ABCDEF /* FirebaseMessaging */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 8F1A0B7D2F0A111100ABCDEF /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseMessaging;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

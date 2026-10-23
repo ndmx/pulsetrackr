@@ -9,8 +9,8 @@ const AUDIT_CHAIN_ID = 'sos_access_v1';
 const AUDIT_SCHEMA_VERSION = 1;
 const GENESIS_HASH = '0'.repeat(64);
 
-export function auditRef() {
-  return db.collection('sos_access_audit').doc();
+export function auditRef(database: any = db) {
+  return database.collection('sos_access_audit').doc();
 }
 
 export function auditEvent({ eventType, actorUid, role, sessionId, decision, reason, redacted, deleteAfter, createdAtMillis, previousHash, sequence, eventHash }: any) {
@@ -46,14 +46,14 @@ export async function logAudit(event: any): Promise<any> {
   });
 }
 
-export async function prepareAuditAppend(transaction: any, event: any): Promise<any> {
-  const headRef = db.collection('sos_access_audit_chain_heads').doc(AUDIT_CHAIN_ID);
+export async function prepareAuditAppend(transaction: any, event: any, database: any = db): Promise<any> {
+  const headRef = database.collection('sos_access_audit_chain_heads').doc(AUDIT_CHAIN_ID);
   const headSnap = await transaction.get(headRef);
   const head = headSnap.exists ? headSnap.data() : {};
   const previousHash = typeof head.eventHash === 'string' ? head.eventHash : GENESIS_HASH;
   const sequence = Number.isInteger(head.sequence) ? head.sequence + 1 : 1;
   const createdAtMillis = Number.isFinite(event.createdAtMillis) ? event.createdAtMillis : Date.now();
-  const recordRef = auditRef();
+  const recordRef = auditRef(database);
   const hashPayload = {
     chainId: AUDIT_CHAIN_ID,
     schemaVersion: AUDIT_SCHEMA_VERSION,
@@ -91,8 +91,8 @@ export function writePreparedAudit(transaction: any, prepared: any): void {
   transaction.set(prepared.headRef, prepared.head, { merge: true });
 }
 
-export async function appendAuditToTransaction(transaction: any, event: any): Promise<void> {
-  const prepared = await prepareAuditAppend(transaction, event);
+export async function appendAuditToTransaction(transaction: any, event: any, database: any = db): Promise<void> {
+  const prepared = await prepareAuditAppend(transaction, event, database);
   writePreparedAudit(transaction, prepared);
 }
 

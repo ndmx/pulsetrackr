@@ -339,6 +339,33 @@ struct LocationUpdatePayload: Codable {
 
 
 
+// MARK: - NeighborhoodPulse
+struct NeighborhoodPulse: Codable {
+    let baselineBuilding: Bool
+    let cell: String
+    let resolution: Int
+    let score: Int
+    let tier: PulseTier
+    let trailingCounts: [String: Int]
+    let updatedAt: Date
+
+    enum CodingKeys: String, CodingKey {
+        case baselineBuilding = "baseline_building"
+        case cell, resolution, score, tier
+        case trailingCounts = "trailing_counts"
+        case updatedAt = "updated_at"
+    }
+}
+
+
+
+
+enum PulseTier: String, Codable {
+    case active = "active"
+    case calm = "calm"
+    case elevated = "elevated"
+}
+
 enum PrivilegedRole: String, Codable {
     case careTeam = "careTeam"
     case lawEnforcement = "lawEnforcement"
@@ -359,6 +386,7 @@ struct PublicIncident: Codable {
     let locationRevealStatus: LocationRevealStatus?
     let longitude: Double?
     let neighborhood: String
+    let officialSourceName: String?
     let officialUpdates: Int
     let publicH3Cell: String?
     let publicH3Resolution: Int?
@@ -385,6 +413,7 @@ struct PublicIncident: Codable {
         case locationPrivacyPolicy = "location_privacy_policy"
         case locationRevealStatus = "location_reveal_status"
         case longitude, neighborhood
+        case officialSourceName = "official_source_name"
         case officialUpdates = "official_updates"
         case publicH3Cell = "public_h3_cell"
         case publicH3Resolution = "public_h3_resolution"

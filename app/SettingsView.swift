@@ -184,10 +184,10 @@ struct SettingsView: View {
     }
 
     private var sosContactsDescription: String {
-        if sosStore.activeTrustedContacts.isEmpty {
-            return "Add people before travel"
+        if sosStore.activeAppTrustedContacts.isEmpty {
+            return "Invite a PulseTrackr contact before travel"
         }
-        return "\(sosStore.activeTrustedContacts.count) ready for trusted-contact alerts"
+        return "\(sosStore.activeAppTrustedContacts.count) ready for in-app SOS alerts"
     }
 
 }
@@ -266,7 +266,7 @@ private struct SettingsStatusView: View {
         case .failed: IncidentSeverity.high.tint
         case .syncing: IncidentSeverity.medium.tint
         case .delivered: DS.Color.positive
-        case .localOnly, .ready: sosStore.activeTrustedContacts.isEmpty ? IncidentSeverity.high.tint : DS.Color.positive
+        case .localOnly, .ready: sosStore.activeAppTrustedContacts.isEmpty ? IncidentSeverity.high.tint : DS.Color.positive
         }
     }
 

@@ -3,20 +3,10 @@ import { onTaskDispatched } from 'firebase-functions/v2/tasks';
 import { logger } from 'firebase-functions';
 import { getFunctions } from 'firebase-admin/functions';
 import { db, FieldValue, Timestamp } from '../shared/admin';
-import {
-  webhookOptions,
-  taskQueueOptions,
-  secretValue,
-  twilioAccountSid,
-  twilioApiKeySid,
-  twilioApiKeySecret,
-  twilioFromNumber,
-  twilioEmailFromAddress,
-  twilioAuthToken,
-} from '../shared/config';
+import { webhookOptions, taskQueueOptions, secretValue, twilioAuthToken } from '../shared/config';
 import { withoutUndefined, cleanString, retentionDate, firestoreLocation, numberOr } from '../shared/util';
 import { decryptPrivateJson } from '../shared/envelope';
-import { providerReadiness, sendNotificationAttempt } from '../notificationProviders';
+import { sendFcmPush } from '../notificationProviders';
 import {
   normalizePhoneNumberForSMS,
   parseInboundOptCommand,
@@ -93,7 +83,6 @@ export async function enqueueSosNotificationTask({ sessionId, ownerUid, contacts
   const taskPayload = {
     sessionId,
     ownerUid,
-    contacts,
     directionOfTravel,
     deleteAfter: deleteAfter.toISOString(),
   };
@@ -112,16 +101,16 @@ export async function enqueueSosNotificationTask({ sessionId, ownerUid, contacts
     await processSosNotificationTask(taskPayload, { retryCount: 0 });
     return {
       enqueued: true,
-      notificationSummary: { queued: contacts.length, sent: 0, failed: 0, skipped: 0, optedOut: 0 },
+      notificationSummary: { queued: 0, sent: 0, failed: 0, skipped: 0, optedOut: 0 },
     };
   }
 
   try {
     await getFunctions().taskQueue(TASK_QUEUE_FUNCTION_NAME).enqueue(taskPayload);
-    logger.info('Enqueued SOS notification worker task', { sessionId, contactCount: contacts.length });
+    logger.info('Enqueued SOS in-app alert task', { sessionId });
     return {
       enqueued: true,
-      notificationSummary: { queued: contacts.length, sent: 0, failed: 0, skipped: 0, optedOut: 0 },
+      notificationSummary: { queued: 0, sent: 0, failed: 0, skipped: 0, optedOut: 0 },
     };
   } catch (error: any) {
     await recordNotificationDLQ({
@@ -166,17 +155,12 @@ export async function processSosNotificationTask(payload: any, context: any = {}
       return;
     }
 
-    const contacts = Array.isArray(payload.contacts) ? payload.contacts : (session.trustedContacts || []);
     const location = sessionPlainLocation(session, sessionId, ownerUid);
     const directionOfTravel = payload.directionOfTravel || session.directionOfTravel;
 
-    const delivery = await enqueueTrustedContactNotifications({
-      sessionId,
-      ownerUid,
-      contacts,
-      location,
-      deleteAfter,
-    });
+    // Ignore legacy task payloads containing SMS, call, or email routes. The
+    // accepted relationship query below is the sole source of recipients.
+    const delivery = emptyLegacyDelivery();
     const appDelivery = await enqueueAppTrustedContactAlerts({
       sessionId,
       ownerUid,
@@ -223,141 +207,18 @@ export async function processSosNotificationTask(payload: any, context: any = {}
   }
 }
 
-export async function enqueueTrustedContactNotifications({ sessionId, ownerUid, contacts, location, deleteAfter }: any) {
-  if (!contacts.length) {
-    return {
-      trustedContactsNotified: [],
-      trustedContactsOptedOut: [],
-      notificationSummary: { queued: 0, sent: 0, failed: 0, skipped: 0, optedOut: 0 },
-    };
-  }
-
-  const batch = db.batch();
-  const attempts: any[] = [];
-  const immediateResults: any[] = [];
-  for (const contact of contacts) {
-    for (const channel of contact.channels) {
-      if (channel === 'app_push') {
-        continue;
-      }
-      const attemptRef = db.collection('sos_notification_attempts_private').doc();
-      const destination = destinationForChannel(contact, channel);
-      if (channel === 'sms' && await isSmsOptedOut(destination)) {
-        batch.set(attemptRef, withoutUndefined({
-          sessionId,
-          ownerUid,
-          contactId: contact.contactId,
-          channel,
-          destination,
-          status: 'recipient_opted_out',
-          provider: providerNameForChannel(channel),
-          errorMessage: 'recipient_previously_opted_out',
-          createdAt: FieldValue.serverTimestamp(),
-          updatedAt: FieldValue.serverTimestamp(),
-          deleteAfter: Timestamp.fromDate(deleteAfter),
-        }));
-        immediateResults.push({
-          status: 'recipient_opted_out',
-          provider: providerNameForChannel(channel),
-          providerMessageId: null,
-          errorMessage: 'recipient_previously_opted_out',
-          contactId: contact.contactId,
-          destination,
-        });
-        continue;
-      }
-      batch.set(attemptRef, withoutUndefined({
-        sessionId,
-        ownerUid,
-        contactId: contact.contactId,
-        channel,
-        destination,
-        status: 'queued',
-        provider: providerNameForChannel(channel),
-        createdAt: FieldValue.serverTimestamp(),
-        updatedAt: FieldValue.serverTimestamp(),
-        deleteAfter: Timestamp.fromDate(deleteAfter),
-      }));
-      attempts.push({ attemptRef, contact, channel, destination });
-    }
-  }
-  await batch.commit();
-
-  logger.info('Queued SOS trusted-contact notifications', {
-    sessionId,
-    contactCount: contacts.length,
-    providerReadiness: providerReadiness(),
-  });
-
-  return deliverQueuedNotifications({ sessionId, attempts, location, initialResults: immediateResults });
+export async function enqueueTrustedContactNotifications(_args: any) {
+  // Kept as a compatibility entry point for already queued tasks. No external
+  // provider is allowed to send from the SOS worker after the in-app cutover.
+  return emptyLegacyDelivery();
 }
 
-async function deliverQueuedNotifications({ sessionId, attempts, location, initialResults = [] }: any) {
-  const deliveryResults = await Promise.all(attempts.map(async (attempt: any) => {
-    const sentAt = new Date();
-    const result = await sendNotificationAttempt({
-      sessionId,
-      contact: attempt.contact,
-      channel: attempt.channel,
-      destination: attempt.destination,
-      location,
-      env: notificationProviderEnv(),
-    });
-
-    await attempt.attemptRef.set(withoutUndefined({
-      status: result.status,
-      provider: result.provider,
-      providerMessageId: result.providerMessageId,
-      errorMessage: result.errorMessage,
-      sentAt: result.status === 'sent' ? Timestamp.fromDate(sentAt) : undefined,
-      updatedAt: FieldValue.serverTimestamp(),
-    }), { merge: true });
-
-    if (result.status === 'recipient_opted_out') {
-      await recordSmsOptOutFromDelivery({
-        destination: attempt.destination,
-        errorMessage: result.errorMessage,
-      });
-    }
-
-    return { ...result, contactId: attempt.contact.contactId };
-  }));
-
-  const results = [...initialResults, ...deliveryResults];
-  const summary = results.reduce((counts, result) => {
-    if (result.status === 'sent') counts.sent += 1;
-    else if (result.status === 'failed') counts.failed += 1;
-    else if (result.status === 'recipient_opted_out') counts.optedOut += 1;
-    else counts.skipped += 1;
-    return counts;
-  }, { sent: 0, failed: 0, skipped: 0, optedOut: 0 });
-  const trustedContactsNotified = [...new Set(
-    results
-      .filter((result) => result.status === 'sent')
-      .map((result) => result.contactId)
-  )];
-  const trustedContactsOptedOut = [...new Set(
-    results
-      .filter((result) => result.status === 'recipient_opted_out')
-      .map((result) => result.contactId)
-  )];
-  const notificationSummary = {
-    queued: attempts.length + initialResults.length,
-    sent: summary.sent,
-    failed: summary.failed,
-    skipped: summary.skipped,
-    optedOut: summary.optedOut,
+function emptyLegacyDelivery() {
+  return {
+    trustedContactsNotified: [],
+    trustedContactsOptedOut: [],
+    notificationSummary: { queued: 0, sent: 0, failed: 0, skipped: 0, optedOut: 0 },
   };
-
-  await db.collection('sos_sessions_private').doc(sessionId).set({
-    trustedContactsNotified,
-    trustedContactsOptedOut,
-    notificationSummary,
-    updatedAt: FieldValue.serverTimestamp(),
-  }, { merge: true });
-
-  logger.info('Processed SOS trusted-contact notifications', { sessionId, ...summary });
-  return { trustedContactsNotified, trustedContactsOptedOut, notificationSummary };
 }
 
 async function enqueueAppTrustedContactAlerts({ sessionId, ownerUid, location, directionOfTravel, deleteAfter }: any) {
@@ -381,6 +242,7 @@ async function enqueueAppTrustedContactAlerts({ sessionId, ownerUid, location, d
       directionOfTravel,
       status: 'active',
       deleteAfter,
+      kind: 'sos',
     });
     batch.set(alertRef, alert, { merge: true });
     batch.set(attemptRef, withoutUndefined({
@@ -400,6 +262,31 @@ async function enqueueAppTrustedContactAlerts({ sessionId, ownerUid, location, d
     appTrustedContactsNotified.push(relationship.id);
   }
   await batch.commit();
+
+  // The Firestore document is the durable in-app alert. Push only wakes a
+  // recipient whose app is closed; no location is included in the push.
+  await Promise.all(relationships.map(async (relationship: any) => {
+    try {
+      const devices = await db.collection('user_push_devices_private')
+        .where('owner_uid', '==', relationship.trustedContactUid).limit(5).get();
+      await Promise.all(devices.docs.map(async (device: any) => {
+        const token = cleanString(device.data()?.fcm_token, 4096);
+        if (!token) return;
+        await sendFcmPush({
+          token,
+          title: `${relationship.ownerDisplayName || 'PulseTrackr user'} activated SOS`,
+          body: 'Open PulseTrackr to view the live alert.',
+          data: { session_id: sessionId, kind: 'sos' },
+        });
+      }));
+    } catch (error: any) {
+      logger.warn('SOS app push nudge failed', {
+        sessionId,
+        relationshipId: relationship.id,
+        error: String(error?.message || error),
+      });
+    }
+  }));
 
   logger.info('Created SOS app trusted-contact alerts', {
     sessionId,
@@ -430,9 +317,10 @@ function appAlertRef(sessionId: string, relationshipId: string) {
   return db.collection('sos_app_alerts_private').doc(`${sessionId}_${relationshipId}`);
 }
 
-function appAlertPayload({ sessionId, relationship, location, directionOfTravel, status, deleteAfter }: any) {
+export function appAlertPayload({ sessionId, relationship, location, directionOfTravel, status, deleteAfter, kind = 'sos' }: any) {
   return withoutUndefined({
     sessionId,
+    kind,
     ownerUid: relationship.ownerUid,
     recipientUid: relationship.trustedContactUid,
     relationshipId: relationship.id,
@@ -513,54 +401,8 @@ function combineNotificationSummaries(first: any, second: any) {
   };
 }
 
-function destinationForChannel(contact: any, channel: string) {
-  if (channel === 'app_push') return contact.appUserUid;
-  if (channel === 'email') return contact.emailAddress;
-  return contact.phoneNumber;
-}
-
-async function isSmsOptedOut(destination: unknown) {
-  const docId = smsOptOutDocId(destination);
-  if (!docId) return false;
-
-  const snapshot = await db.collection('sos_sms_opt_outs_private').doc(docId).get();
-  return snapshot.exists && snapshot.data()?.status === 'opted_out';
-}
-
-async function recordSmsOptOutFromDelivery({ destination, errorMessage }: any) {
-  const normalized = normalizePhoneNumberForSMS(destination);
-  const docId = smsOptOutDocId(normalized);
-  if (!docId || !normalized) return;
-
-  const now = new Date();
-  await db.collection('sos_sms_opt_outs_private').doc(docId).set(withoutUndefined({
-    status: 'opted_out',
-    phoneLast4: normalized.slice(-4),
-    keyword: 'TWILIO_API_BLOCK',
-    errorMessage: cleanString(errorMessage, 500),
-    optedOutAt: FieldValue.serverTimestamp(),
-    updatedAt: FieldValue.serverTimestamp(),
-    deleteAfter: FieldValue.delete(),
-  }), { merge: true });
-}
-
 export function providerNameForChannel(channel: string) {
-  if (channel === 'sms' || channel === 'phone_call' || channel === 'email') return 'twilio';
-  if (channel === 'app_push') return 'firestore_app_alert';
-  return 'unknown';
-}
-
-function notificationProviderEnv() {
-  return {
-    TWILIO_ACCOUNT_SID: secretValue(twilioAccountSid) || process.env.TWILIO_ACCOUNT_SID,
-    TWILIO_API_KEY_SID: secretValue(twilioApiKeySid) || process.env.TWILIO_API_KEY_SID,
-    TWILIO_API_KEY_SECRET: secretValue(twilioApiKeySecret) || process.env.TWILIO_API_KEY_SECRET,
-    TWILIO_AUTH_TOKEN: secretValue(twilioAuthToken) || process.env.TWILIO_AUTH_TOKEN,
-    TWILIO_FROM_NUMBER: secretValue(twilioFromNumber) || process.env.TWILIO_FROM_NUMBER,
-    TWILIO_VOICE_TWIML: process.env.TWILIO_VOICE_TWIML,
-    TWILIO_EMAIL_FROM_ADDRESS: secretValue(twilioEmailFromAddress) || process.env.TWILIO_EMAIL_FROM_ADDRESS,
-    TWILIO_EMAIL_FROM_NAME: process.env.TWILIO_EMAIL_FROM_NAME,
-  };
+  return channel === 'app_push' ? 'firestore_app_alert' : 'unsupported';
 }
 
 function publicWebhookUrl(request: any) {

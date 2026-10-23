@@ -159,6 +159,12 @@ struct ContentView: View {
         }
         .onAppear {
             sosStore.startObservingAppAlerts()
+            Task {
+                try? await sosStore.refreshAppTrustedContacts()
+                if sosStore.appTrustedContactList?.incoming.isEmpty == false {
+                    SOSPushRegistration.requestPermissionAndRegister()
+                }
+            }
             incidentStore.retryPendingOutbox()
             sosStore.retryQueuedEvents()
         }
@@ -168,6 +174,12 @@ struct ContentView: View {
         }
         .onChange(of: scenePhase) { _, phase in
             guard phase == .active else { return }
+            Task {
+                try? await sosStore.refreshAppTrustedContacts()
+                if sosStore.appTrustedContactList?.incoming.isEmpty == false {
+                    SOSPushRegistration.requestPermissionAndRegister()
+                }
+            }
             incidentStore.retryPendingOutbox()
             sosStore.retryQueuedEvents()
         }

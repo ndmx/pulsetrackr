@@ -17,20 +17,23 @@ xcodebuild -project pulsetrackr.xcodeproj -scheme pulsetrackr -destination 'gene
 ## Required Secrets
 
 ```sh
-firebase functions:secrets:set TWILIO_ACCOUNT_SID --project pulsetracker-0000
-firebase functions:secrets:set TWILIO_API_KEY_SID --project pulsetracker-0000
-firebase functions:secrets:set TWILIO_API_KEY_SECRET --project pulsetracker-0000
-firebase functions:secrets:set TWILIO_AUTH_TOKEN --project pulsetracker-0000
-firebase functions:secrets:set TWILIO_FROM_NUMBER --project pulsetracker-0000
-firebase functions:secrets:set TWILIO_EMAIL_FROM_ADDRESS --project pulsetracker-0000
 firebase functions:secrets:set SOS_ENVELOPE_KEK --project pulsetracker-0000
 ```
+
+`TWILIO_AUTH_TOKEN` remains bound only to the legacy inbound STOP/START
+webhook. No new SOS alert uses Twilio. Configure the APNs key in Firebase
+Console before enabling the new iPhone push flow.
 
 ## Deploy
 
 ```sh
-firebase deploy --only functions:pulsetrackr-sos,firestore:rules,firestore:indexes,storage --project pulsetracker-0000
+firebase deploy --only functions:pulsetrackr-sos,storage --project pulsetracker-0000
 ```
+
+Deploy the merged Firestore rules from the PulseTrack website repository. Its
+Hosting config owns the public site and the `/i/**` incident share rewrite.
+Do not deploy Hosting or Firestore rules from this app repository to the shared
+Firebase project.
 
 ## Post-Deploy Checks
 

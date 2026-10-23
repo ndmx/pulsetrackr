@@ -27,9 +27,9 @@ export const ALLOWED_RESOLUTION_REASONS = new Set([
   'false_alarm',
   'timed_out',
   'transferred_to_care_team',
+  'arrived_safely',
 ]);
 
-const ALLOWED_CHANNELS = new Set(['sms', 'phone_call', 'email', 'app_push']);
 const PRIVILEGED_ROLES = new Set(['sosAdmin', 'careTeam', 'lawEnforcement']);
 export const LEGAL_PROCESS_TYPES = new Set([
   'warrant',
@@ -54,6 +54,11 @@ function requiredString(value: unknown, fieldName: string): string {
 
 function optionalString(value: unknown): string | null {
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
+}
+
+function optionalBoundedString(value: unknown, maxLength: number): string | null {
+  const string = optionalString(value);
+  return string ? string.slice(0, maxLength) : null;
 }
 
 function parseDate(value: unknown, fieldName: string, fallback: Date = new Date()): Date {
@@ -175,43 +180,6 @@ function sanitizeDevice(input: any = {}) {
   });
 }
 
-function sanitizeTrustedContacts(input: any = []) {
-  if (!Array.isArray(input)) {
-    throw invalidArgument('trusted_contacts_to_notify must be an array');
-  }
-
-  return input.slice(0, 10).map((contact: any, index: number) => {
-    if (typeof contact !== 'object' || contact == null) {
-      throw invalidArgument(`trusted_contacts_to_notify[${index}] is invalid`);
-    }
-    const contactId = requiredString(contact.contact_id, `trusted_contacts_to_notify[${index}].contact_id`);
-    const channels = Array.isArray(contact.channels)
-      ? contact.channels.filter((channel: string) => ALLOWED_CHANNELS.has(channel))
-      : [];
-    const phoneNumber = optionalString(contact.phone_number);
-    const emailAddress = optionalString(contact.email_address);
-    const appUserUid = optionalString(contact.app_user_uid);
-    const appRelationshipId = optionalString(contact.app_relationship_id);
-    const deliverableChannels = channels.filter((channel: string) => {
-      if (channel === 'email') return Boolean(emailAddress);
-      if (channel === 'app_push') return Boolean(appUserUid && appRelationshipId);
-      return Boolean(phoneNumber);
-    });
-
-    return withoutNullish({
-      contactId,
-      displayName: requiredString(contact.display_name, `trusted_contacts_to_notify[${index}].display_name`),
-      relationshipLabel: optionalString(contact.relationship_label),
-      phoneNumber,
-      emailAddress,
-      appUserUid,
-      appRelationshipId,
-      channels: [...new Set(deliverableChannels)],
-      consentedAt: contact.consented_at ? parseDate(contact.consented_at, `trusted_contacts_to_notify[${index}].consented_at`) : null,
-    });
-  }).filter((contact: any) => contact.channels.length > 0);
-}
-
 function limitRecentTrail(input: any, activatedAt: Date, privacy: any) {
   if (!privacy.includeRecentTrail) {
     return [];
@@ -234,6 +202,11 @@ function limitRecentTrail(input: any, activatedAt: Date, privacy: any) {
 export function sanitizeActivationPayload(data: any, now: Date = new Date()) {
   const activatedAt = parseDate(data.activated_at, 'activated_at', now);
   const privacy = sanitizePrivacyPolicy(data.privacy);
+  const sessionKind = optionalString(data.session_kind ?? data.sessionKind) === 'escort' ? 'escort' : 'sos';
+  const escortRelationshipId = optionalBoundedString(data.escort_relationship_id ?? data.escortRelationshipId, 160);
+  if (sessionKind === 'escort' && !escortRelationshipId) {
+    throw invalidArgument('escort_relationship_id is required');
+  }
 
   return {
     clientSessionId: requiredString(data.client_session_id, 'client_session_id'),
@@ -242,9 +215,13 @@ export function sanitizeActivationPayload(data: any, now: Date = new Date()) {
     lastKnownLocation: sanitizeLocationSnapshot(data.last_known_location, 'last_known_location'),
     recentTrail: limitRecentTrail(data.recent_trail, activatedAt, privacy),
     directionOfTravel: sanitizeDirectionOfTravel(data.direction_of_travel),
-    trustedContacts: sanitizeTrustedContacts(data.trusted_contacts_to_notify),
+    // Older builds still send local phone, email, and app-contact snapshots.
+    // Resolve recipients only from accepted server-side app relationships.
+    trustedContacts: [],
     device: sanitizeDevice(data.device),
     privacy,
+    sessionKind,
+    escortRelationshipId: sessionKind === 'escort' ? escortRelationshipId : undefined,
   };
 }
 

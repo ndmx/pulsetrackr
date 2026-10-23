@@ -94,6 +94,10 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    match /sos_push_rate_limits_private/{uid} {
+      allow read, write: if false;
+    }
+
     match /sos_app_trusted_contact_invites_private/{inviteId} {
       allow read, write: if false;
     }

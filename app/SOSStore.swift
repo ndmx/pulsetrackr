@@ -12,6 +12,7 @@ final class SOSStore: ObservableObject {
     @Published private(set) var deliveryState: SOSDeliveryState = .ready
     @Published private(set) var remoteSessionID: String?
     @Published private(set) var alertedContactIDs: Set<UUID> = []
+    @Published private(set) var appAlertedRelationshipIDs: Set<String> = []
     @Published private(set) var optedOutContactIDs: Set<UUID> = []
     @Published private(set) var lastRemoteError: String?
     @Published private(set) var lastUploadAttemptAt: Date?
@@ -71,12 +72,8 @@ final class SOSStore: ObservableObject {
         queuedEvents.filter { $0.status == .failed }.count
     }
 
-    var activeTrustedContacts: [SOSTrustedContact] {
-        trustedContacts.filter(\.isDeliverable)
-    }
-
-    var alertedContacts: [SOSTrustedContact] {
-        trustedContacts.filter { alertedContactIDs.contains($0.id) }
+    var activeAppTrustedContacts: [SOSAppTrustedContactRelationship] {
+        appTrustedContactList?.outgoing ?? []
     }
 
     var activeAppAlert: SOSAppAlert? {
@@ -88,7 +85,7 @@ final class SOSStore: ObservableObject {
         case .localOnly:
             return "Saved on this device"
         case .ready:
-            return activeTrustedContacts.isEmpty ? "Add trusted contacts" : "Ready to alert"
+            return activeAppTrustedContacts.isEmpty ? "Add an app contact" : "Ready to alert"
         case .syncing:
             return "Sending emergency updates"
         case .delivered:
@@ -137,6 +134,7 @@ final class SOSStore: ObservableObject {
         session = newSession
         remoteSessionID = nil
         alertedContactIDs = []
+        appAlertedRelationshipIDs = []
         optedOutContactIDs = []
         queuedEvents = []
         lastRemoteError = nil
@@ -299,6 +297,7 @@ final class SOSStore: ObservableObject {
             trustedContactDisplayName: trustedContactDisplayName
         )
         try? await refreshAppTrustedContacts()
+        SOSPushRegistration.requestPermissionAndRegister()
         return relationship
     }
 
@@ -307,6 +306,14 @@ final class SOSStore: ObservableObject {
             throw SOSStoreError.remoteUnavailable
         }
         appTrustedContactList = try await remote.listAppTrustedContacts()
+    }
+
+    func revokeAppTrustedContact(_ relationship: SOSAppTrustedContactRelationship) async throws {
+        guard let remote = configuredRemoteStore() else {
+            throw SOSStoreError.remoteUnavailable
+        }
+        try await remote.revokeAppTrustedContact(relationshipID: relationship.id)
+        try await refreshAppTrustedContacts()
     }
 
     func startObservingAppAlerts() {
@@ -403,7 +410,7 @@ final class SOSStore: ObservableObject {
     private func uploadErrorMessage(for error: Error) -> String {
         switch error {
         case SOSStoreError.noTrustedContactDelivery:
-            return smsOptOutNotice ?? "SOS saved, but no trusted contact was reached. Check the SMS/email provider setup and try again."
+            return "SOS saved, but no PulseTrackr contact received it. Ask someone to accept your in-app invite."
         case SOSStoreError.missingRemoteSession:
             return "SOS is saved, but one queued update is missing its server link. PulseTrackr will reconnect it before sending."
         case SOSStoreError.missingLocation:
@@ -429,9 +436,8 @@ final class SOSStore: ObservableObject {
     }
 
     /// Backend trusted-contact delivery runs in an async Cloud Task, so the activation
-    /// response comes back before SMS/email are actually sent. Poll the owner-scoped
-    /// status endpoint a few times so the SOS panel reflects real "alerted"/"opted out"
-    /// status instead of staying on "ready".
+    /// response comes back before the in-app alert is written. Poll the
+    /// owner-scoped status endpoint so the panel reflects actual delivery.
     private func startNotificationStatusReadback() {
         guard !isPollingNotificationStatus, let remote = configuredRemoteStore() else { return }
         isPollingNotificationStatus = true
@@ -451,6 +457,7 @@ final class SOSStore: ObservableObject {
     /// Returns true once the backend notification saga has settled (so polling can stop).
     @discardableResult
     private func applyNotificationStatus(_ status: SOSNotificationStatus) -> Bool {
+        appAlertedRelationshipIDs.formUnion(status.appTrustedContactsNotified)
         optedOutContactIDs.formUnion(status.trustedContactsOptedOut)
         if !status.trustedContactsNotified.isEmpty {
             alertedContactIDs.formUnion(status.trustedContactsNotified)
@@ -461,11 +468,12 @@ final class SOSStore: ObservableObject {
             }
             loadTrustedContacts()
         }
-        if let notice = smsOptOutNotice {
-            lastRemoteError = notice
-        } else if status.notificationSummary.sent > 0 || !status.trustedContactsNotified.isEmpty || !status.appTrustedContactsNotified.isEmpty {
+        if status.notificationSummary.sent > 0 || !status.appTrustedContactsNotified.isEmpty {
             lastRemoteError = nil
             deliveryState = .delivered
+        } else if status.isSettled {
+            lastRemoteError = "No PulseTrackr contact received this SOS. Ask someone to accept your in-app invite."
+            deliveryState = .localOnly
         }
         persistSnapshot()
         return status.isSettled
@@ -489,16 +497,8 @@ final class SOSStore: ObservableObject {
         let response = try await remote.activateSOS(payload: payload)
         remoteSessionID = response.sessionID
         alertedContactIDs = Set(response.trustedContactsNotified)
+        appAlertedRelationshipIDs = Set(response.appTrustedContactsNotified)
         optedOutContactIDs = Set(response.trustedContactsOptedOut)
-        if let smsOptOutNotice {
-            lastRemoteError = smsOptOutNotice
-        }
-        if session.kind != .escort,
-           !activeTrustedContacts.isEmpty,
-           response.notificationSummary.sent == 0,
-           response.notificationSummary.queued == 0 {
-            throw SOSStoreError.noTrustedContactDelivery
-        }
         if !response.trustedContactsNotified.isEmpty {
             // Contacts were alerted remotely; failing to persist that locally must not
             // fail the SOS activation, but it shouldn't vanish silently either.
@@ -510,21 +510,6 @@ final class SOSStore: ObservableObject {
             loadTrustedContacts()
         }
         markEvents(ofKind: .started, status: .delivered)
-    }
-
-    private var smsOptOutNotice: String? {
-        let optedOutNames = activeTrustedContacts
-            .filter { optedOutContactIDs.contains($0.id) }
-            .map(\.displayName)
-        guard !optedOutNames.isEmpty else { return nil }
-
-        if optedOutNames.count == 1, let name = optedOutNames.first {
-            return "\(name) opted out of receiving your SOS SMS alerts. They can reply START to receive texts again."
-        }
-
-        let names = optedOutNames.prefix(3).joined(separator: ", ")
-        let suffix = optedOutNames.count > 3 ? " and \(optedOutNames.count - 3) more" : ""
-        return "\(names)\(suffix) opted out of receiving your SOS SMS alerts. They can reply START to receive texts again."
     }
 
     private func uploadLocationEvents(remote: SOSRemoteStore, sessionID: String, force: Bool) async throws {
@@ -655,7 +640,7 @@ final class SOSStore: ObservableObject {
         case .escort:
             return hasEscortRelationship ? .syncing : .localOnly
         case .sos:
-            return activeTrustedContacts.isEmpty ? .localOnly : .syncing
+            return activeAppTrustedContacts.isEmpty ? .localOnly : .syncing
         }
     }
 
@@ -670,7 +655,7 @@ final class SOSStore: ObservableObject {
             lastKnownLocation: activationLocation,
             recentTrail: trail.compactMap(\.locationSnapshot),
             directionOfTravel: latestDirectionOfTravel,
-            trustedContacts: isEscort ? [] : activeTrustedContacts.compactMap(\.notificationTarget),
+            trustedContacts: [],
             privacyPolicy: privacyPolicy,
             // Omit kind on plain SOS so the wire payload stays legacy-compatible.
             sessionKind: isEscort ? .escort : nil,
@@ -689,7 +674,7 @@ final class SOSStore: ObservableObject {
             lastKnownLocation: lastKnownLocation,
             recentTrail: trail.compactMap(\.locationSnapshot),
             directionOfTravel: latestDirectionOfTravel,
-            trustedContactsToNotify: isEscort ? [] : activeTrustedContacts.compactMap(\.notificationTarget),
+            trustedContactsToNotify: [],
             privacyPolicy: privacyPolicy,
             sessionKind: isEscort ? .escort : nil,
             escortRelationshipId: isEscort ? session.escortRelationshipId : nil
@@ -770,16 +755,8 @@ final class SOSStore: ObservableObject {
             ))
             remoteSessionID = response.sessionID
             alertedContactIDs = Set(response.trustedContactsNotified)
+            appAlertedRelationshipIDs = Set(response.appTrustedContactsNotified)
             optedOutContactIDs = Set(response.trustedContactsOptedOut)
-            if let smsOptOutNotice {
-                lastRemoteError = smsOptOutNotice
-            }
-            if sessionKind != .escort,
-               !activeTrustedContacts.isEmpty,
-               response.notificationSummary.sent == 0,
-               response.notificationSummary.queued == 0 {
-                throw SOSStoreError.noTrustedContactDelivery
-            }
             if !response.trustedContactsNotified.isEmpty {
                 do {
                     try contactStore.markNotified(contactIDs: response.trustedContactsNotified)

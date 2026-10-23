@@ -46,6 +46,15 @@ jobs:
         working-directory: functions
         run: npm run test:rules
 
+      - name: Verify deployable Functions package
+        run: |
+          git diff --exit-code -- functions/vendor/contract
+          npm ci --omit=dev --prefix functions
+          node -e "require('./functions/lib/index.js')"
+
+      - name: Provide Mapbox build token
+        run: printf 'pk.ci-build-placeholder' > "$HOME/.mapbox"
+
       - name: Build and test iOS app
         run: |
           xcodebuild test \
