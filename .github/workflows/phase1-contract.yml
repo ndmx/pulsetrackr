@@ -46,6 +46,9 @@ jobs:
         working-directory: functions
         run: npm run test:rules
 
+      - name: Provide Mapbox build token
+        run: printf 'pk.ci-build-placeholder' > "$HOME/.mapbox"
+
       - name: Build and test iOS app
         run: |
           xcodebuild test \
