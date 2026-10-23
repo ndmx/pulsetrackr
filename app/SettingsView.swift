@@ -7,7 +7,7 @@ struct SettingsView: View {
     @AppStorage(AppStorageKey.watchRadius) private var watchRadius = 3.0
     @AppStorage(AppStorageKey.urgentAlerts) private var urgentAlerts = true
     @AppStorage(AppStorageKey.communityAlerts) private var communityAlerts = true
-    @AppStorage(AppStorageKey.lightModeEnabled) private var lightModeEnabled = false
+    @AppStorage(AppStorageKey.lightModeEnabled) private var lightModeEnabled = true
 
     // watchRadius is stored canonically in km; display it in the user's locale unit.
     private var radiusLabel: String {
@@ -68,12 +68,12 @@ struct SettingsView: View {
             SettingsToggleRow(
                 icon: lightModeEnabled ? "sun.max.fill" : "moon.stars.fill",
                 color: DS.Color.accent,
-                label: "Light mode",
-                description: "PulseTrackr opens in dark mode. Turn this on for a light theme.",
+                label: "Light appearance",
+                description: "Warm paper for forms and settings. Turn off for a dark appearance.",
                 isOn: $lightModeEnabled
             )
 
-            Text("The live map and feed stay dark for legibility.")
+            Text("The live map keeps its night styling so incidents and SOS stay easy to spot.")
                 .font(DS.Font.caption())
                 .foregroundStyle(DS.Color.textTertiary)
         }

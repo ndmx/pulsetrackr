@@ -7,38 +7,16 @@ struct ContentView: View {
     @State private var selectedTab: AppTab = .map
     @State private var deepLinkIncident: Incident?
     @State private var escortFollowAlert: SOSAppAlert?
-    @State private var isShowingOpeningAnimation = true
     @AppStorage(AppStorageKey.hasSeenLaunch) private var hasSeenLaunch = false
-    @AppStorage(AppStorageKey.launchLastSeenAt) private var launchLastSeenAt = 0.0
-    @AppStorage(AppStorageKey.launchLastSeenVersion) private var launchLastSeenVersion = ""
     @AppStorage(AppStorageKey.watchRadius) private var watchRadius = 3.0
-    @AppStorage(AppStorageKey.lightModeEnabled) private var lightModeEnabled = false
+    @AppStorage(AppStorageKey.lightModeEnabled) private var lightModeEnabled = true
     @Environment(\.scenePhase) private var scenePhase
 
-    private let welcomeResetInterval: TimeInterval = 30 * 24 * 60 * 60
-
     var body: some View {
-        ZStack {
-            content
-                .opacity(isShowingOpeningAnimation ? 0 : 1)
-
-            if isShowingOpeningAnimation {
-                OpeningSplashView()
-                    .transition(.opacity)
-                    .zIndex(1)
-            }
-        }
-        // Declare the scheme at the root so the very first frame is dark (no
-        // system-light flash on launch). Default is dark; the Settings toggle
-        // opts into light. The immersive map/feed screens keep their own dark
-        // override regardless, since they're built on a dark map surface.
+        content
+        // New installs use Lumina's warm light canvas; an existing appearance
+        // choice remains in AppStorage. The map keeps its operational styling.
         .preferredColorScheme(lightModeEnabled ? .light : .dark)
-        .task {
-            try? await Task.sleep(for: .seconds(1.8))
-            withAnimation(.easeInOut(duration: 0.35)) {
-                isShowingOpeningAnimation = false
-            }
-        }
         .onOpenURL { url in
             guard case .incident(let id) = DeepLinkRouter.destination(for: url) else { return }
             selectedTab = .feed
@@ -56,7 +34,7 @@ struct ContentView: View {
 
     @ViewBuilder
     private var content: some View {
-        if shouldShowWelcome {
+        if !hasSeenLaunch {
             LaunchView {
                 markWelcomeSeen()
             }
@@ -65,28 +43,8 @@ struct ContentView: View {
         }
     }
 
-    private var shouldShowWelcome: Bool {
-        guard hasSeenLaunch else { return true }
-        guard launchLastSeenVersion == currentAppVersion else { return true }
-        guard launchLastSeenAt > 0 else { return true }
-        return Date().timeIntervalSince1970 - launchLastSeenAt >= welcomeResetInterval
-    }
-
     private func markWelcomeSeen() {
-        // Set the flags directly (no withAnimation): the LaunchView runs a
-        // `.repeatForever` pulse, and animating the LaunchView → mainTabs identity
-        // swap while that transaction is live can wedge the transition and freeze
-        // the UI. A plain state change swaps in the tabs immediately and reliably.
         hasSeenLaunch = true
-        launchLastSeenAt = Date().timeIntervalSince1970
-        launchLastSeenVersion = currentAppVersion
-    }
-
-    private var currentAppVersion: String {
-        let info = Bundle.main.infoDictionary
-        let version = info?["CFBundleShortVersionString"] as? String ?? "0"
-        let build = info?["CFBundleVersion"] as? String ?? "0"
-        return "\(version)-\(build)"
     }
 
     private var mainTabs: some View {

@@ -172,22 +172,6 @@ struct MapboxIncidentMapView: View {
 
                 Spacer()
 
-                Button {
-                    showDensityLayer.toggle()
-                } label: {
-                    Image(systemName: showDensityLayer ? "flame.fill" : "flame")
-                        .font(.headline)
-                        .foregroundStyle(.white)
-                        .frame(width: 44, height: 44)
-                        .background(showDensityLayer ? DS.Color.accent.opacity(0.86) : .black.opacity(0.42), in: Circle())
-                        .overlay(
-                            Circle()
-                                .stroke(.white.opacity(showDensityLayer ? 0.32 : 0), lineWidth: 1)
-                        )
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Toggle density heatmap")
-
                 Button(action: focusOnUserLocation) {
                     Image(systemName: "location.viewfinder")
                         .font(.headline)
@@ -231,6 +215,16 @@ struct MapboxIncidentMapView: View {
                                 selectedCategory = category
                                 selectedIncident = activeMapIncidents.first { $0.category == category }
                             }
+                        }
+
+                        CategoryChip(
+                            title: "Density",
+                            icon: "square.3.layers.3d.top.filled",
+                            color: DS.Color.accent,
+                            isSelected: showDensityLayer,
+                            darkBackground: true
+                        ) {
+                            showDensityLayer.toggle()
                         }
                     }
                     .padding(.horizontal, 18)

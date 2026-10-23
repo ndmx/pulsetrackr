@@ -20,8 +20,7 @@ struct CategoryChip: View {
     var icon: String
     var color: Color
     var isSelected: Bool
-    /// Retained for source compatibility; both map and feed chips now share the
-    /// same adaptive surface, so the flag no longer changes styling.
+    /// Map chips keep white text on the night map even when the app uses light mode.
     var darkBackground: Bool = false
     var action: () -> Void
 
@@ -32,14 +31,15 @@ struct CategoryChip: View {
                 .lineLimit(1)
                 .padding(.horizontal, DS.Space.md)
                 .padding(.vertical, DS.Space.sm)
+                .frame(minHeight: 44)
                 .background(
-                    isSelected ? color.opacity(0.16) : DS.Color.surfaceHigh,
+                    darkBackground ? Color.black.opacity(0.72) : (isSelected ? color.opacity(0.16) : DS.Color.surfaceHigh),
                     in: Capsule()
                 )
-                .foregroundStyle(isSelected ? color : DS.Color.textSecondary)
+                .foregroundStyle(darkBackground ? .white : (isSelected ? color : DS.Color.textSecondary))
                 .overlay(
                     Capsule().stroke(
-                        isSelected ? color.opacity(0.5) : DS.Color.hairline,
+                        darkBackground ? (isSelected ? color : .white.opacity(0.32)) : (isSelected ? color.opacity(0.5) : DS.Color.hairline),
                         lineWidth: 1
                     )
                 )
