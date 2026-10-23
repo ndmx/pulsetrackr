@@ -20,7 +20,7 @@ struct DeepLinkRouterTests {
     }
 
     @Test func validHTTPSUniversalLink() {
-        let url = URL(string: "https://share.example.com/i/inc-42")!
+        let url = URL(string: "https://pulsetracker.org/i/inc-42")!
         #expect(DeepLinkRouter.destination(for: url) == .incident(id: "inc-42"))
     }
 
@@ -29,17 +29,16 @@ struct DeepLinkRouterTests {
         #expect(DeepLinkRouter.destination(for: url) == .incident(id: "aB_9-Zz"))
     }
 
-    @Test func emptyAllowedHostsAcceptsAnyHTTPSHost() {
-        // allowedHosts starts empty and should accept any host for https /i/{id}.
+    @Test func unknownHostIsRejected() {
         let url = URL(string: "https://totally-unknown.host/i/okid")!
-        #expect(DeepLinkRouter.destination(for: url) == .incident(id: "okid"))
+        #expect(DeepLinkRouter.destination(for: url) == nil)
     }
 
     // MARK: - Rejected ids
 
     @Test func emptyIdIsRejected() {
         let custom = URL(string: "pulsetrackr://incident/")!
-        let universal = URL(string: "https://example.com/i/")!
+        let universal = URL(string: "https://pulsetracker.org/i/")!
         #expect(DeepLinkRouter.destination(for: custom) == nil)
         #expect(DeepLinkRouter.destination(for: universal) == nil)
     }
@@ -52,7 +51,7 @@ struct DeepLinkRouterTests {
 
     @Test func idAt128CharsIsAccepted() {
         let maxID = String(repeating: "b", count: 128)
-        let url = URL(string: "https://example.com/i/\(maxID)")!
+        let url = URL(string: "https://pulsetracker.org/i/\(maxID)")!
         #expect(DeepLinkRouter.destination(for: url) == .incident(id: maxID))
     }
 
@@ -63,13 +62,13 @@ struct DeepLinkRouterTests {
     }
 
     @Test func idWithSpacesIsRejected() {
-        let url = URL(string: "https://example.com/i/foo%20bar")!
+        let url = URL(string: "https://pulsetracker.org/i/foo%20bar")!
         #expect(DeepLinkRouter.destination(for: url) == nil)
     }
 
     @Test func idWithPercentEncodingTricksIsRejected() {
         // Encoded slash becomes an extra path segment after URL parsing.
-        let encodedSlash = URL(string: "https://example.com/i/foo%2Fbar")!
+        let encodedSlash = URL(string: "https://pulsetracker.org/i/foo%2Fbar")!
         #expect(DeepLinkRouter.destination(for: encodedSlash) == nil)
 
         // Encoded percent and other disallowed characters in the decoded id.
@@ -80,13 +79,13 @@ struct DeepLinkRouterTests {
     // MARK: - Path / scheme rejections
 
     @Test func wrongPathPrefixIsRejected() {
-        let url = URL(string: "https://example.com/x/abc123")!
+        let url = URL(string: "https://pulsetracker.org/x/abc123")!
         #expect(DeepLinkRouter.destination(for: url) == nil)
     }
 
     @Test func extraPathComponentsAreRejected() {
         let custom = URL(string: "pulsetrackr://incident/abc/extra")!
-        let universal = URL(string: "https://example.com/i/abc/extra")!
+        let universal = URL(string: "https://pulsetracker.org/i/abc/extra")!
         #expect(DeepLinkRouter.destination(for: custom) == nil)
         #expect(DeepLinkRouter.destination(for: universal) == nil)
     }

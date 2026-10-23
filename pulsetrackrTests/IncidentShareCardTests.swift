@@ -20,7 +20,7 @@ struct IncidentShareCardTests {
 
         let url = ShareConfig.shareURL(for: incident)
         #expect(url != nil)
-        #expect(url?.absoluteString == "https://pulsetrackr.example/i/remote-doc-42")
+        #expect(url?.absoluteString == "https://pulsetracker.org/i/remote-doc-42")
         #expect(url?.path == "/i/remote-doc-42")
     }
 
@@ -31,7 +31,7 @@ struct IncidentShareCardTests {
 
         let url = ShareConfig.shareURL(for: incident)
         #expect(url != nil)
-        #expect(url?.absoluteString == "https://pulsetrackr.example/i/a1b2c3d4-e5f6-7890-abcd-ef1234567890")
+        #expect(url?.absoluteString == "https://pulsetracker.org/i/a1b2c3d4-e5f6-7890-abcd-ef1234567890")
         #expect(url?.lastPathComponent == id.uuidString.lowercased())
     }
 

@@ -27,6 +27,7 @@ export const ALLOWED_RESOLUTION_REASONS = new Set([
   'false_alarm',
   'timed_out',
   'transferred_to_care_team',
+  'arrived_safely',
 ]);
 
 const ALLOWED_CHANNELS = new Set(['sms', 'phone_call', 'email', 'app_push']);
@@ -54,6 +55,11 @@ function requiredString(value: unknown, fieldName: string): string {
 
 function optionalString(value: unknown): string | null {
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
+}
+
+function optionalBoundedString(value: unknown, maxLength: number): string | null {
+  const string = optionalString(value);
+  return string ? string.slice(0, maxLength) : null;
 }
 
 function parseDate(value: unknown, fieldName: string, fallback: Date = new Date()): Date {
@@ -234,6 +240,11 @@ function limitRecentTrail(input: any, activatedAt: Date, privacy: any) {
 export function sanitizeActivationPayload(data: any, now: Date = new Date()) {
   const activatedAt = parseDate(data.activated_at, 'activated_at', now);
   const privacy = sanitizePrivacyPolicy(data.privacy);
+  const sessionKind = optionalString(data.session_kind ?? data.sessionKind) === 'escort' ? 'escort' : 'sos';
+  const escortRelationshipId = optionalBoundedString(data.escort_relationship_id ?? data.escortRelationshipId, 160);
+  if (sessionKind === 'escort' && !escortRelationshipId) {
+    throw invalidArgument('escort_relationship_id is required');
+  }
 
   return {
     clientSessionId: requiredString(data.client_session_id, 'client_session_id'),
@@ -242,9 +253,11 @@ export function sanitizeActivationPayload(data: any, now: Date = new Date()) {
     lastKnownLocation: sanitizeLocationSnapshot(data.last_known_location, 'last_known_location'),
     recentTrail: limitRecentTrail(data.recent_trail, activatedAt, privacy),
     directionOfTravel: sanitizeDirectionOfTravel(data.direction_of_travel),
-    trustedContacts: sanitizeTrustedContacts(data.trusted_contacts_to_notify),
+    trustedContacts: sessionKind === 'escort' ? [] : sanitizeTrustedContacts(data.trusted_contacts_to_notify),
     device: sanitizeDevice(data.device),
     privacy,
+    sessionKind,
+    escortRelationshipId: sessionKind === 'escort' ? escortRelationshipId : undefined,
   };
 }
 

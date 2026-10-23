@@ -55,6 +55,7 @@ exports.incident_share_page = share.incident_share_page;
 if (process.env.NODE_ENV === 'test') {
   exports.__test = {
     ...incidents.__test,
+    ...sos.__test,
     ...moderation.__test,
     ...push.__test,
     ...share.__test,

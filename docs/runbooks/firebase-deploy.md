@@ -29,8 +29,13 @@ firebase functions:secrets:set SOS_ENVELOPE_KEK --project pulsetracker-0000
 ## Deploy
 
 ```sh
-firebase deploy --only functions:pulsetrackr-sos,firestore:rules,firestore:indexes,storage --project pulsetracker-0000
+firebase deploy --only functions:pulsetrackr-sos,storage --project pulsetracker-0000
 ```
+
+Deploy the merged Firestore rules from the PulseTrack website repository. Its
+Hosting config owns the public site and the `/i/**` incident share rewrite.
+Do not deploy Hosting or Firestore rules from this app repository to the shared
+Firebase project.
 
 ## Post-Deploy Checks
 

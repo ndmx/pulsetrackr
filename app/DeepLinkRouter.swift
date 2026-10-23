@@ -5,8 +5,7 @@ enum DeepLinkDestination: Equatable {
 }
 
 enum DeepLinkRouter {
-    /// Populated by the share-link domain once chosen; empty accepts any host.
-    static var allowedHosts: Set<String> = []
+    static let allowedHosts: Set<String> = ["pulsetracker.org", "pulsetracker-0000.web.app"]
 
     static func destination(for url: URL) -> DeepLinkDestination? {
         switch url.scheme?.lowercased() {
@@ -31,9 +30,7 @@ enum DeepLinkRouter {
 
     private static func universalLinkDestination(for url: URL) -> DeepLinkDestination? {
         // https://{host}/i/{id}
-        if !allowedHosts.isEmpty {
-            guard let host = url.host, allowedHosts.contains(host) else { return nil }
-        }
+        guard let host = url.host, allowedHosts.contains(host) else { return nil }
         let components = pathComponents(of: url)
         guard components.count == 2,
               components[0] == "i",

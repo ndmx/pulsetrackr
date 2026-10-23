@@ -127,7 +127,7 @@ export function buildIncidentShareHtml(incident: PublicIncidentShareFields, id: 
     ${officialUpdates > 0 ? '<p class="official">Official update</p>' : ''}
     <nav class="actions" aria-label="Incident actions">
       <a class="primary" href="pulsetrackr://incident/${safeId}">Open in PulseTrackr</a>
-      <a class="secondary" href="https://apps.apple.com/">Get the app</a>
+      <a class="secondary" href="/incident/${safeId}">View on web</a>
     </nav>
   </main>
 </body>

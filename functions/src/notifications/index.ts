@@ -381,6 +381,7 @@ async function enqueueAppTrustedContactAlerts({ sessionId, ownerUid, location, d
       directionOfTravel,
       status: 'active',
       deleteAfter,
+      kind: 'sos',
     });
     batch.set(alertRef, alert, { merge: true });
     batch.set(attemptRef, withoutUndefined({
@@ -430,9 +431,10 @@ function appAlertRef(sessionId: string, relationshipId: string) {
   return db.collection('sos_app_alerts_private').doc(`${sessionId}_${relationshipId}`);
 }
 
-function appAlertPayload({ sessionId, relationship, location, directionOfTravel, status, deleteAfter }: any) {
+export function appAlertPayload({ sessionId, relationship, location, directionOfTravel, status, deleteAfter, kind = 'sos' }: any) {
   return withoutUndefined({
     sessionId,
+    kind,
     ownerUid: relationship.ownerUid,
     recipientUid: relationship.trustedContactUid,
     relationshipId: relationship.id,
